@@ -1,0 +1,38 @@
+# Build artifacts
+bin/
+obj/
+out/
+
+# User-specific files
+*.user
+*.rsuser
+*.suo
+
+# IDE/editor settings
+.vs/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+
+# Test and coverage results
+TestResults/
+*.trx
+coverage/
+coverage.*
+
+# Logs
+*.log
+
+# Mutation testing reports
+mutation-reports/
+StrykerOutput/
+
+# Tool cache
+.dotnet/

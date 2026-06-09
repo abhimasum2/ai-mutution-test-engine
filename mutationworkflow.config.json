@@ -1,0 +1,14 @@
+{
+  "RepositoryRoot": ".",
+  "TargetProjectPath": "src/YourApp/YourApp.csproj",
+  "TestProjectPath": "tests/YourApp.Tests/YourApp.Tests.csproj",
+  "ReportsDirectory": "mutation-reports",
+  "BaseRef": "origin/main",
+  "OpenAiModel": "gpt-4.1-mini",
+  "OpenAiApiKey": "",
+  "CommitAndPush": true,
+  "MaxSourceFileChars": 24000,
+  "MaxConcurrency": 4,
+  "ProcessTimeoutMinutes": 30,
+  "Verbose": true
+}
