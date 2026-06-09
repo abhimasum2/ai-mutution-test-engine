@@ -8,7 +8,8 @@ internal sealed class WorkflowOrchestrator(
     StrykerService stryker,
     OpenAiTestGenerationService ai,
     TestIntegrationService integration,
-    ReportService reports)
+    ReportService reports,
+    ProcessRunner processRunner)
 {
     public async Task RunAsync(AppConfig config, CancellationToken cancellationToken)
     {
@@ -50,11 +51,47 @@ internal sealed class WorkflowOrchestrator(
         var preSummary = await stryker.ParseReportAsync(preReportPath, cancellationToken);
         Log(config, $"Pre-commit score: {preSummary.Score:F2}%");
 
-        Log(config, "Generating test updates from mutation report with OpenAI...");
         var generationPlan = integration.BuildGenerationPlan(config.RepositoryRoot, testProjectPath, changedFiles);
-        var patches = await ai.GenerateTestsAsync(config, framework, preSummary, generationPlan, cancellationToken);
-        var updatedTests = await integration.ApplyGeneratedPatchesAsync(config.RepositoryRoot, patches, cancellationToken);
-        Log(config, $"Updated/created test files: {updatedTests.Count}");
+        if (generationPlan.Count == 0)
+        {
+            throw new InvalidOperationException("No generation plan entries were created for changed files.");
+        }
+
+        IReadOnlyList<string> updatedTests = Array.Empty<string>();
+        ProcessResult? lastBuildResult = null;
+
+        for (var attempt = 1; attempt <= config.GenerationMaxIterations; attempt++)
+        {
+            Log(config, $"Generating test updates from mutation report with AI (attempt {attempt}/{config.GenerationMaxIterations})...");
+            var patches = await ai.GenerateTestsAsync(config, framework, preSummary, generationPlan, cancellationToken);
+            updatedTests = await integration.ApplyGeneratedPatchesAsync(config.RepositoryRoot, patches, cancellationToken);
+            Log(config, $"Updated/created test files: {updatedTests.Count}");
+
+            Log(config, "Validating test project build...");
+            lastBuildResult = await processRunner.RunAsync(
+                "dotnet",
+                $"build \"{testProjectPath}\" --nologo",
+                config.RepositoryRoot,
+                timeout,
+                cancellationToken);
+
+            if (lastBuildResult.IsSuccess)
+            {
+                Log(config, "Test project build passed.");
+                break;
+            }
+
+            Log(config, $"Test project build failed on attempt {attempt}. Regenerating tests...");
+            if (attempt == config.GenerationMaxIterations)
+            {
+                var buildDetails = string.IsNullOrWhiteSpace(lastBuildResult.StdErr)
+                    ? lastBuildResult.StdOut
+                    : lastBuildResult.StdErr;
+
+                throw new InvalidOperationException(
+                    "Generated tests did not build after all attempts. Last build output:\n" + buildDetails);
+            }
+        }
 
         if (config.CommitAndPush)
         {

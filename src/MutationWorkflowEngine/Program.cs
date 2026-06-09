@@ -17,7 +17,8 @@ internal static class Program
                 new StrykerService(),
                 new OpenAiTestGenerationService(),
                 new TestIntegrationService(),
-                new ReportService());
+                new ReportService(),
+                new ProcessRunner());
 
             await orchestrator.RunAsync(config, CancellationToken.None);
             Console.WriteLine("Workflow completed successfully.");
@@ -86,6 +87,7 @@ internal static class Program
 
         var commitAndPush = GetBool(parsed, "commit", configFile.CommitAndPush, true);
         var verbose = GetBool(parsed, "verbose", configFile.Verbose, true);
+        var generationMaxIterations = GetInt(parsed, "generation-max-iterations", configFile.GenerationMaxIterations, 3);
         var maxChars = GetInt(parsed, "max-source-chars", configFile.MaxSourceFileChars, 24000);
         var maxConcurrency = GetInt(parsed, "max-concurrency", configFile.MaxConcurrency, 4);
         var timeoutMinutes = GetInt(parsed, "process-timeout-minutes", configFile.ProcessTimeoutMinutes, 30);
@@ -102,6 +104,7 @@ internal static class Program
             ollamaBaseUrl,
             ollamaModel,
             commitAndPush,
+            Math.Max(1, generationMaxIterations),
             maxChars,
             Math.Max(1, maxConcurrency),
             Math.Max(5, timeoutMinutes),
