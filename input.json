@@ -1,0 +1,5 @@
+{
+  "RepositoryRoot": "../ai-mutution-test-main-code",
+  "ReportsDirectory": "mutation-reports/local-run",
+  "BaseRef": "origin/main"
+}

@@ -18,8 +18,8 @@ A .NET 8 console application for PR-focused mutation testing and AI-assisted tes
 - .NET SDK 8+
 - git configured in PATH
 - Stryker.NET CLI available (`dotnet tool install -g dotnet-stryker`)
-- Update `mutationworkflow.config.json` with your real project paths
-- OpenAI API key in `mutationworkflow.config.json` (`OpenAiApiKey`) or env var `OPENAI_API_KEY`
+- Update `input.json` with your real project paths
+- OpenAI API key in `input.json` (`OpenAiApiKey`) or env var `OPENAI_API_KEY`
 - Optional local fallback: Ollama running at `http://localhost:11434`
 
 ## Build
@@ -32,12 +32,12 @@ dotnet build src/MutationWorkflowEngine/MutationWorkflowEngine.csproj
 
 ```powershell
 dotnet run --project src/MutationWorkflowEngine/MutationWorkflowEngine.csproj -- \
-  --config ./mutationworkflow.config.json
+  --input ./input.json
 ```
 
 ## Configuration file
 
-Main settings are loaded from `mutationworkflow.config.json`:
+Main settings are loaded from `input.json`:
 
 - `RepositoryRoot`
 - `TargetProjectPath`
@@ -59,7 +59,8 @@ Main settings are loaded from `mutationworkflow.config.json`:
 
 All config keys can still be overridden at runtime when needed:
 
-- `--config` path to configuration file (default: `./mutationworkflow.config.json`)
+- `--input` path to input file (default: `./input.json`)
+- `--config` legacy alias for input file path
 - `--repo` repository root
 - `--target` target app csproj
 - `--test` test project csproj (optional; auto-discovered if omitted)

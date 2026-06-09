@@ -36,39 +36,32 @@ internal static class Program
     {
         var parsed = ParseArgs(args);
         var currentDirectory = Directory.GetCurrentDirectory();
-        var configPath = GetValue(parsed, "config", Path.Combine(currentDirectory, "mutationworkflow.config.json"));
+        var configPath = GetValue(
+            parsed,
+            "input",
+            GetValue(parsed, "config", Path.Combine(currentDirectory, "input.json")));
         var configFile = LoadConfigFile(configPath);
         var configDirectory = Path.GetDirectoryName(Path.GetFullPath(configPath)) ?? currentDirectory;
 
         var repositoryRootRaw = GetValue(parsed, "repo", configFile.RepositoryRoot ?? currentDirectory);
         var repositoryRoot = ResolvePath(repositoryRootRaw, configDirectory);
 
-        var targetProjectRaw = GetValue(parsed, "target", configFile.TargetProjectPath ?? string.Empty);
-        if (string.IsNullOrWhiteSpace(targetProjectRaw))
-        {
-            throw new InvalidOperationException("Missing target project path in config. Set TargetProjectPath in mutationworkflow.config.json or pass --target.");
-        }
+        var targetProjectFallback = configFile.TargetProjectPath ?? DiscoverTargetProjectPath(repositoryRoot);
+        var targetProjectRaw = GetValue(parsed, "target", targetProjectFallback);
 
         var targetProjectPath = ResolvePath(targetProjectRaw, repositoryRoot);
 
         var testProjectRaw = GetValue(parsed, "test", configFile.TestProjectPath ?? string.Empty);
         var testProjectPath = string.IsNullOrWhiteSpace(testProjectRaw) ? null : ResolvePath(testProjectRaw, repositoryRoot);
 
-        var reportsRaw = GetValue(parsed, "reports", configFile.ReportsDirectory ?? string.Empty);
-        if (string.IsNullOrWhiteSpace(reportsRaw))
-        {
-            throw new InvalidOperationException("Missing reports directory in config. Set ReportsDirectory in mutationworkflow.config.json or pass --reports.");
-        }
+        var reportsFallback = configFile.ReportsDirectory ?? "mutation-reports/default-run";
+        var reportsRaw = GetValue(parsed, "reports", reportsFallback);
 
         var reportsDir = ResolvePath(reportsRaw, repositoryRoot);
 
-        var baseRef = GetValue(parsed, "base", configFile.BaseRef ?? string.Empty);
-        if (string.IsNullOrWhiteSpace(baseRef))
-        {
-            throw new InvalidOperationException("Missing base ref in config. Set BaseRef in mutationworkflow.config.json or pass --base.");
-        }
+        var baseRef = GetValue(parsed, "base", configFile.BaseRef ?? "origin/main");
 
-        var model = GetValue(parsed, "openai-model", configFile.OpenAiModel ?? string.Empty);
+        var model = GetValue(parsed, "openai-model", configFile.OpenAiModel ?? "gpt-4.1-mini");
         var apiKey = GetValue(parsed, "openai-key", configFile.OpenAiApiKey ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? string.Empty);
 
         var useOllamaFallback = GetBool(parsed, "ollama-fallback", configFile.UseOllamaFallback, true);
@@ -116,7 +109,7 @@ internal static class Program
         var fullPath = Path.GetFullPath(configPath);
         if (!File.Exists(fullPath))
         {
-            throw new FileNotFoundException($"Config file not found: {fullPath}");
+            throw new FileNotFoundException($"Input file not found: {fullPath}");
         }
 
         var json = File.ReadAllText(fullPath);
@@ -125,7 +118,7 @@ internal static class Program
             PropertyNameCaseInsensitive = true
         });
 
-        return config ?? throw new InvalidOperationException($"Unable to parse config file: {fullPath}");
+        return config ?? throw new InvalidOperationException($"Unable to parse input file: {fullPath}");
     }
 
     private static Dictionary<string, string> ParseArgs(string[] args)
@@ -173,6 +166,33 @@ internal static class Program
         }
 
         return configValue ?? fallback;
+    }
+
+    private static string DiscoverTargetProjectPath(string repositoryRoot)
+    {
+        var projectFiles = Directory.EnumerateFiles(repositoryRoot, "*.csproj", SearchOption.AllDirectories)
+            .Where(path => !path.Contains("\\obj\\", StringComparison.OrdinalIgnoreCase))
+            .Where(path => !path.Contains("\\bin\\", StringComparison.OrdinalIgnoreCase))
+            .Where(path => !Path.GetFileNameWithoutExtension(path).Contains("Test", StringComparison.OrdinalIgnoreCase))
+            .Where(path => !Path.GetFileNameWithoutExtension(path).Contains("Spec", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (projectFiles.Count == 1)
+        {
+            return Path.GetRelativePath(repositoryRoot, projectFiles[0]);
+        }
+
+        var srcCandidates = projectFiles
+            .Where(path => path.Contains("\\src\\", StringComparison.OrdinalIgnoreCase) || path.Contains("/src/", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (srcCandidates.Count == 1)
+        {
+            return Path.GetRelativePath(repositoryRoot, srcCandidates[0]);
+        }
+
+        throw new InvalidOperationException(
+            "Unable to auto-discover target project. Set TargetProjectPath in input.json or pass --target.");
     }
 
     private static int GetInt(Dictionary<string, string> args, string key, int? configValue, int fallback)
