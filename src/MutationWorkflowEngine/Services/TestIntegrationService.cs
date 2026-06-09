@@ -39,10 +39,24 @@ internal sealed class TestIntegrationService
         CancellationToken cancellationToken)
     {
         var updated = new List<string>();
+        var fullRepositoryRoot = Path.GetFullPath(repositoryRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
 
         foreach (var patch in patches)
         {
-            var absolutePath = Path.GetFullPath(Path.Combine(repositoryRoot, patch.RelativeTestFilePath));
+            var safeRelativePath = NormalizeRelativePath(patch.RelativeTestFilePath);
+            if (string.IsNullOrWhiteSpace(safeRelativePath))
+            {
+                continue;
+            }
+
+            var absolutePath = Path.GetFullPath(Path.Combine(repositoryRoot, safeRelativePath));
+            if (!absolutePath.StartsWith(fullRepositoryRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             var directory = Path.GetDirectoryName(absolutePath);
             if (!string.IsNullOrWhiteSpace(directory))
             {
@@ -50,10 +64,38 @@ internal sealed class TestIntegrationService
             }
 
             await File.WriteAllTextAsync(absolutePath, patch.Content, cancellationToken);
-            updated.Add(patch.RelativeTestFilePath);
+            updated.Add(safeRelativePath);
         }
 
         return updated.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static string NormalizeRelativePath(string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            return string.Empty;
+        }
+
+        var normalized = relativePath
+            .Trim()
+            .Replace('\t', Path.DirectorySeparatorChar)
+            .Replace('\r', Path.DirectorySeparatorChar)
+            .Replace('\n', Path.DirectorySeparatorChar)
+            .Replace('\\', Path.DirectorySeparatorChar)
+            .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        if (Path.IsPathRooted(normalized))
+        {
+            return string.Empty;
+        }
+
+        var segments = normalized
+            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Where(segment => !string.IsNullOrWhiteSpace(segment) && segment != "." && segment != "..")
+            .ToArray();
+
+        return segments.Length == 0 ? string.Empty : Path.Combine(segments);
     }
 
     private static string? FindExistingTestFile(string root, string preferredName)

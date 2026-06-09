@@ -20,6 +20,7 @@ A .NET 8 console application for PR-focused mutation testing and AI-assisted tes
 - Stryker.NET CLI available (`dotnet tool install -g dotnet-stryker`)
 - Update `mutationworkflow.config.json` with your real project paths
 - OpenAI API key in `mutationworkflow.config.json` (`OpenAiApiKey`) or env var `OPENAI_API_KEY`
+- Optional local fallback: Ollama running at `http://localhost:11434`
 
 ## Build
 
@@ -45,6 +46,9 @@ Main settings are loaded from `mutationworkflow.config.json`:
 - `BaseRef`
 - `OpenAiModel`
 - `OpenAiApiKey` (optional if env var is set)
+- `UseOllamaFallback`
+- `OllamaBaseUrl`
+- `OllamaModel`
 - `CommitAndPush`
 - `MaxSourceFileChars`
 - `MaxConcurrency`
@@ -63,6 +67,9 @@ All config keys can still be overridden at runtime when needed:
 - `--reports` report output folder
 - `--openai-key` OpenAI API key
 - `--openai-model` OpenAI model name
+- `--ollama-fallback` true/false to enable local fallback
+- `--ollama-url` Ollama base URL (default `http://localhost:11434`)
+- `--ollama-model` Ollama model name
 - `--commit` true/false to commit and push generated tests
 - `--max-source-chars` per-file prompt cap for large files
 - `--max-concurrency` OpenAI parallel generation workers

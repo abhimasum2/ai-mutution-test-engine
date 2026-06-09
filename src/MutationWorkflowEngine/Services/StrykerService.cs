@@ -26,22 +26,30 @@ internal sealed class StrykerService
         var strykerConfigPath = Path.Combine(reportOutputDirectory, $"stryker-config-{runName}.json");
         var mutatePatterns = changedFiles.Select(ToGlobPattern).Distinct().ToList();
 
-        var config = new
+        // Stryker requires a "stryker-config" root wrapper with kebab-case keys.
+        // Run from the test project directory so Stryker can discover the project under test.
+        var testProjectDir = Path.GetDirectoryName(testProjectPath)
+            ?? throw new InvalidOperationException("Cannot resolve test project directory.");
+
+        var strykerConfig = new Dictionary<string, object>
         {
-            mutate = mutatePatterns,
-            reporters = new[] { "json", "html", "cleartext" },
-            testRunner = "dotnettest",
-            project = Path.GetFileName(targetProjectPath),
-            testProjects = new[] { testProjectPath }
+            ["stryker-config"] = new Dictionary<string, object>
+            {
+                ["project"] = Path.GetFileName(targetProjectPath),
+                ["test-projects"] = new[] { testProjectPath },
+                ["mutate"] = mutatePatterns,
+                ["reporters"] = new[] { "json", "html", "cleartext" }
+            }
         };
 
-        var configJson = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+        var configJson = JsonSerializer.Serialize(strykerConfig, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(strykerConfigPath, configJson, cancellationToken);
 
+        // --output is a CLI-only flag; not allowed inside the config file.
         var result = await _runner.RunAsync(
             "dotnet",
             $"stryker --config-file \"{strykerConfigPath}\" --output \"{reportOutputDirectory}\"",
-            repositoryRoot,
+            testProjectDir,
             timeout,
             cancellationToken);
 

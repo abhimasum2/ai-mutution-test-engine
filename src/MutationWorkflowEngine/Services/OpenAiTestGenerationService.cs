@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MutationWorkflowEngine.Models;
 
 namespace MutationWorkflowEngine.Services;
@@ -20,11 +21,29 @@ internal sealed class OpenAiTestGenerationService
         IReadOnlyList<(string SourceFileAbsolute, string RelativeSourceFile, string TestFileAbsolute, string RelativeTestFile)> generationPlan,
         CancellationToken cancellationToken)
     {
-        using var http = new HttpClient
+        using var openAiHttp = new HttpClient
         {
             Timeout = TimeSpan.FromMinutes(config.ProcessTimeoutMinutes)
         };
-        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", config.OpenAiApiKey);
+        if (!string.IsNullOrWhiteSpace(config.OpenAiApiKey))
+        {
+            openAiHttp.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", config.OpenAiApiKey);
+        }
+
+        using var ollamaHttp = new HttpClient
+        {
+            Timeout = TimeSpan.FromMinutes(config.ProcessTimeoutMinutes)
+        };
+
+        var canUseOpenAi = !string.IsNullOrWhiteSpace(config.OpenAiApiKey) && !string.IsNullOrWhiteSpace(config.OpenAiModel);
+        var canUseOllama = config.UseOllamaFallback &&
+                           !string.IsNullOrWhiteSpace(config.OllamaBaseUrl) &&
+                           !string.IsNullOrWhiteSpace(config.OllamaModel);
+
+        if (!canUseOpenAi && !canUseOllama)
+        {
+            throw new InvalidOperationException("No AI generation provider available (OpenAI/Ollama). Check configuration.");
+        }
 
         var semaphore = new SemaphoreSlim(config.MaxConcurrency);
         var tasks = generationPlan.Select(async item =>
@@ -32,7 +51,7 @@ internal sealed class OpenAiTestGenerationService
             await semaphore.WaitAsync(cancellationToken);
             try
             {
-                return await GenerateSinglePatchAsync(http, config, framework, preCommitSummary, item, cancellationToken);
+                return await GenerateSinglePatchAsync(openAiHttp, ollamaHttp, config, framework, preCommitSummary, item, canUseOpenAi, canUseOllama, cancellationToken);
             }
             finally
             {
@@ -45,11 +64,14 @@ internal sealed class OpenAiTestGenerationService
     }
 
     private async Task<GeneratedTestPatch?> GenerateSinglePatchAsync(
-        HttpClient http,
+        HttpClient openAiHttp,
+        HttpClient ollamaHttp,
         AppConfig config,
         TestingFramework framework,
         MutationReportSummary preCommitSummary,
         (string SourceFileAbsolute, string RelativeSourceFile, string TestFileAbsolute, string RelativeTestFile) item,
+        bool canUseOpenAi,
+        bool canUseOllama,
         CancellationToken cancellationToken)
     {
         var sourceContent = await ReadTrimmedAsync(item.SourceFileAbsolute, config.MaxSourceFileChars, cancellationToken);
@@ -65,6 +87,35 @@ internal sealed class OpenAiTestGenerationService
             : $"Mutants={fileReport.Total}, Survived={fileReport.Survived}, Killed={fileReport.Killed}, Score={fileReport.Score:F2}";
 
         var prompt = BuildPrompt(framework, item.RelativeSourceFile, item.RelativeTestFile, mutationHints, sourceContent, existingTestContent);
+
+        if (canUseOpenAi)
+        {
+            try
+            {
+                var openAiText = await GenerateWithOpenAiAsync(openAiHttp, config, prompt, cancellationToken);
+                return ParsePatch(openAiText, item.RelativeTestFile);
+            }
+            catch (Exception ex) when (canUseOllama)
+            {
+                Console.WriteLine($"OpenAI generation failed for {item.RelativeSourceFile}. Falling back to Ollama. Reason: {ex.Message}");
+            }
+        }
+
+        if (canUseOllama)
+        {
+            var ollamaText = await GenerateWithOllamaAsync(ollamaHttp, config, prompt, cancellationToken);
+            return ParsePatch(ollamaText, item.RelativeTestFile);
+        }
+
+        throw new InvalidOperationException($"Failed to generate tests for {item.RelativeSourceFile}.");
+    }
+
+    private static async Task<string> GenerateWithOpenAiAsync(
+        HttpClient http,
+        AppConfig config,
+        string prompt,
+        CancellationToken cancellationToken)
+    {
         var requestPayload = new
         {
             model = config.OpenAiModel,
@@ -83,9 +134,51 @@ internal sealed class OpenAiTestGenerationService
             throw new InvalidOperationException($"OpenAI request failed: {(int)response.StatusCode} {payload}");
         }
 
-        var modelText = ExtractResponseText(payload);
-        var patch = ParsePatch(modelText, item.RelativeTestFile);
-        return patch;
+        return ExtractResponseText(payload);
+    }
+
+    private static async Task<string> GenerateWithOllamaAsync(
+        HttpClient http,
+        AppConfig config,
+        string prompt,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = config.OllamaBaseUrl.TrimEnd('/') + "/api/generate";
+        var payloadObj = new
+        {
+            model = config.OllamaModel,
+            prompt,
+            stream = false,
+            format = "json",
+            options = new
+            {
+                temperature = 0.2
+            }
+        };
+
+        using var response = await http.PostAsync(
+            endpoint,
+            new StringContent(JsonSerializer.Serialize(payloadObj, JsonOptions), Encoding.UTF8, "application/json"),
+            cancellationToken);
+
+        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"Ollama request failed: {(int)response.StatusCode} {payload}");
+        }
+
+        using var doc = JsonDocument.Parse(payload);
+        var root = doc.RootElement;
+        if (root.TryGetProperty("response", out var responseText) && responseText.ValueKind == JsonValueKind.String)
+        {
+            var text = responseText.GetString() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                return text;
+            }
+        }
+
+        throw new InvalidOperationException("Ollama response did not contain usable text.");
     }
 
     private static string BuildPrompt(
@@ -131,21 +224,14 @@ Existing tests (may be empty):
 
     private static GeneratedTestPatch ParsePatch(string rawText, string fallbackRelativePath)
     {
-        var cleaned = rawText.Trim();
-        if (cleaned.StartsWith("```", StringComparison.Ordinal))
-        {
-            cleaned = cleaned.Trim('`').Trim();
-            if (cleaned.StartsWith("json", StringComparison.OrdinalIgnoreCase))
-            {
-                cleaned = cleaned[4..].Trim();
-            }
-        }
+        var cleaned = NormalizeJsonPayload(rawText);
 
         using var doc = JsonDocument.Parse(cleaned);
         var root = doc.RootElement;
         var path = root.TryGetProperty("relativeTestFilePath", out var pathProp)
             ? pathProp.GetString() ?? fallbackRelativePath
             : fallbackRelativePath;
+        path = SanitizeRelativeTestPath(path, fallbackRelativePath);
 
         var content = root.TryGetProperty("content", out var contentProp)
             ? contentProp.GetString() ?? string.Empty
@@ -161,6 +247,93 @@ Existing tests (may be empty):
             : string.Empty;
 
         return new GeneratedTestPatch(path, content, reasoning);
+    }
+
+    private static string SanitizeRelativeTestPath(string candidatePath, string fallbackRelativePath)
+    {
+        if (string.IsNullOrWhiteSpace(candidatePath))
+        {
+            return fallbackRelativePath;
+        }
+
+        var normalized = candidatePath.Trim().Trim('"', '\'');
+        normalized = normalized
+            .Replace('\t', '/')
+            .Replace('\r', '/')
+            .Replace('\n', '/')
+            .Replace('\\', '/');
+
+        // Compress duplicate separators and remove accidental spaces around separators.
+        normalized = Regex.Replace(normalized, @"\s*/\s*", "/");
+        normalized = Regex.Replace(normalized, @"/{2,}", "/");
+
+        if (Path.IsPathRooted(normalized))
+        {
+            return fallbackRelativePath;
+        }
+
+        normalized = normalized.TrimStart('/');
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var segments = normalized
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Where(segment => segment != "." && segment != "..")
+            .Select(segment => new string(segment.Where(ch => !char.IsControl(ch) && !invalidChars.Contains(ch)).ToArray()).Trim())
+            .Where(segment => !string.IsNullOrWhiteSpace(segment))
+            .ToList();
+
+        if (segments.Count == 0)
+        {
+            return fallbackRelativePath;
+        }
+
+        var sanitized = Path.Combine(segments.ToArray());
+        return string.IsNullOrWhiteSpace(sanitized) ? fallbackRelativePath : sanitized;
+    }
+
+    private static string NormalizeJsonPayload(string rawText)
+    {
+        var cleaned = rawText.Trim();
+
+        if (cleaned.StartsWith("```", StringComparison.Ordinal))
+        {
+            cleaned = cleaned.Trim('`').Trim();
+            if (cleaned.StartsWith("json", StringComparison.OrdinalIgnoreCase))
+            {
+                cleaned = cleaned[4..].Trim();
+            }
+        }
+
+        if (LooksLikeJsonObject(cleaned))
+        {
+            return cleaned;
+        }
+
+        var firstBrace = cleaned.IndexOf('{');
+        var lastBrace = cleaned.LastIndexOf('}');
+        if (firstBrace >= 0 && lastBrace > firstBrace)
+        {
+            var extracted = cleaned.Substring(firstBrace, lastBrace - firstBrace + 1).Trim();
+            if (LooksLikeJsonObject(extracted))
+            {
+                return extracted;
+            }
+        }
+
+        throw new InvalidOperationException("Model response was not valid JSON for test patch generation.");
+    }
+
+    private static bool LooksLikeJsonObject(string input)
+    {
+        try
+        {
+            using var _ = JsonDocument.Parse(input);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static string ExtractResponseText(string responsePayload)

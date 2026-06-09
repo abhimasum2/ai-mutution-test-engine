@@ -48,10 +48,10 @@ internal static class Program
             throw new InvalidOperationException("Missing target project path in config. Set TargetProjectPath in mutationworkflow.config.json or pass --target.");
         }
 
-        var targetProjectPath = ResolvePath(targetProjectRaw, configDirectory);
+        var targetProjectPath = ResolvePath(targetProjectRaw, repositoryRoot);
 
         var testProjectRaw = GetValue(parsed, "test", configFile.TestProjectPath ?? string.Empty);
-        var testProjectPath = string.IsNullOrWhiteSpace(testProjectRaw) ? null : ResolvePath(testProjectRaw, configDirectory);
+        var testProjectPath = string.IsNullOrWhiteSpace(testProjectRaw) ? null : ResolvePath(testProjectRaw, repositoryRoot);
 
         var reportsRaw = GetValue(parsed, "reports", configFile.ReportsDirectory ?? string.Empty);
         if (string.IsNullOrWhiteSpace(reportsRaw))
@@ -59,7 +59,7 @@ internal static class Program
             throw new InvalidOperationException("Missing reports directory in config. Set ReportsDirectory in mutationworkflow.config.json or pass --reports.");
         }
 
-        var reportsDir = ResolvePath(reportsRaw, configDirectory);
+        var reportsDir = ResolvePath(reportsRaw, repositoryRoot);
 
         var baseRef = GetValue(parsed, "base", configFile.BaseRef ?? string.Empty);
         if (string.IsNullOrWhiteSpace(baseRef))
@@ -68,15 +68,20 @@ internal static class Program
         }
 
         var model = GetValue(parsed, "openai-model", configFile.OpenAiModel ?? string.Empty);
-        if (string.IsNullOrWhiteSpace(model))
-        {
-            throw new InvalidOperationException("Missing OpenAI model in config. Set OpenAiModel in mutationworkflow.config.json or pass --openai-model.");
-        }
-
         var apiKey = GetValue(parsed, "openai-key", configFile.OpenAiApiKey ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? string.Empty);
-        if (string.IsNullOrWhiteSpace(apiKey))
+
+        var useOllamaFallback = GetBool(parsed, "ollama-fallback", configFile.UseOllamaFallback, true);
+        var ollamaBaseUrl = GetValue(parsed, "ollama-url", configFile.OllamaBaseUrl ?? "http://localhost:11434");
+        var ollamaModel = GetValue(parsed, "ollama-model", configFile.OllamaModel ?? "qwen2.5-coder:7b");
+
+        var hasOpenAi = !string.IsNullOrWhiteSpace(apiKey) && !string.IsNullOrWhiteSpace(model);
+        var hasOllama = useOllamaFallback &&
+                        !string.IsNullOrWhiteSpace(ollamaBaseUrl) &&
+                        !string.IsNullOrWhiteSpace(ollamaModel);
+
+        if (!hasOpenAi && !hasOllama)
         {
-            throw new InvalidOperationException("Missing OpenAI key. Set OpenAiApiKey in config, pass --openai-key, or set OPENAI_API_KEY.");
+            throw new InvalidOperationException("No AI provider configured. Provide OpenAiApiKey/OpenAiModel or enable Ollama fallback with OllamaBaseUrl/OllamaModel.");
         }
 
         var commitAndPush = GetBool(parsed, "commit", configFile.CommitAndPush, true);
@@ -93,6 +98,9 @@ internal static class Program
             baseRef,
             model,
             apiKey,
+            useOllamaFallback,
+            ollamaBaseUrl,
+            ollamaModel,
             commitAndPush,
             maxChars,
             Math.Max(1, maxConcurrency),
