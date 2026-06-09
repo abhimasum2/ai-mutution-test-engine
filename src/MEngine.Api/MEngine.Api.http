@@ -1,6 +1,0 @@
-@MEngine.Api_HostAddress = http://localhost:5268
-
-GET {{MEngine.Api_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###

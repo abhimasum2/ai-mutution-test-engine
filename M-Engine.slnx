@@ -1,8 +1,0 @@
-<Solution>
-  <Folder Name="/src/">
-    <Project Path="src/MEngine.Api/MEngine.Api.csproj" />
-    <Project Path="src/MEngine.Application/MEngine.Application.csproj" />
-    <Project Path="src/MEngine.Domain/MEngine.Domain.csproj" />
-    <Project Path="src/MEngine.Infrastructure/MEngine.Infrastructure.csproj" />
-  </Folder>
-</Solution>
