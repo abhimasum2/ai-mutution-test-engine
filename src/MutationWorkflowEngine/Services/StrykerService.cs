@@ -44,19 +44,30 @@ internal sealed class StrykerService
 
         var configJson = JsonSerializer.Serialize(strykerConfig, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(strykerConfigPath, configJson, cancellationToken);
-
-        // --output is a CLI-only flag; not allowed inside the config file.
-        var result = await _runner.RunAsync(
-            "dotnet",
-            $"stryker --config-file \"{strykerConfigPath}\" --output \"{reportOutputDirectory}\"",
-            testProjectDir,
-            timeout,
-            cancellationToken);
-
-        if (!result.IsSuccess)
+        try
         {
-            throw new InvalidOperationException($"Stryker run failed ({runName}). {result.StdErr}\n{result.StdOut}");
-        }
+
+
+            // --output is a CLI-only flag; not allowed inside the config file.
+            var result = await _runner.RunAsync(
+                "dotnet",
+                $"stryker --config-file \"{strykerConfigPath}\" --output \"{reportOutputDirectory}\"",
+                testProjectDir,
+                timeout,
+                cancellationToken);
+
+			if (!result.IsSuccess)
+			{
+				throw new InvalidOperationException($"Stryker run failed ({runName}). {result.StdErr}\n{result.StdOut}");
+			}
+		}
+        catch (Exception ex)
+		{
+
+			throw ex;
+		}
+
+		
 
         var reportPath = FindMutationJsonReport(reportOutputDirectory);
         if (reportPath is null)
