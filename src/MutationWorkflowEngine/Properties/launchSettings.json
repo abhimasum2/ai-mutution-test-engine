@@ -4,7 +4,7 @@
     "MutationWorkflowEngine": {
       "commandName": "Project",
       "workingDirectory": "$(ProjectDir)",
-      "commandLineArgs": "--artifact ../../../Artifact --main ../../../ai-mutution-test-main-code"
+      "commandLineArgs": "--input C:/Abhishek/OtherAndResearch/MutantTest/Artifact/input.json"
     }
   }
 }

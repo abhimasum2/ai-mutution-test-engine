@@ -36,26 +36,16 @@ internal static class Program
     {
         var parsed = ParseArgs(args);
         var currentDirectory = Directory.GetCurrentDirectory();
-        var artifactRootRaw = GetOptional(parsed, "artifact") ?? GetOptional(parsed, "artifact-folder");
-        var artifactRoot = string.IsNullOrWhiteSpace(artifactRootRaw)
-            ? currentDirectory
-            : ResolvePath(artifactRootRaw, currentDirectory);
 
         var configArg = GetOptional(parsed, "input") ?? GetOptional(parsed, "config");
         var configPath = string.IsNullOrWhiteSpace(configArg)
-            ? Path.Combine(artifactRoot, "input.json")
-            : ResolvePath(configArg, artifactRoot);
+            ? Path.Combine(currentDirectory, "input.json")
+            : ResolvePath(configArg, currentDirectory);
 
         var configFile = LoadConfigFile(configPath);
         var configDirectory = Path.GetDirectoryName(Path.GetFullPath(configPath)) ?? currentDirectory;
 
-        var mainCodeRootRaw = GetOptional(parsed, "main")
-                              ?? GetOptional(parsed, "main-folder")
-                              ?? GetOptional(parsed, "maincode");
-
-        var repositoryRoot = !string.IsNullOrWhiteSpace(mainCodeRootRaw)
-            ? ResolvePath(mainCodeRootRaw, currentDirectory)
-            : ResolvePath(GetValue(parsed, "repo", configFile.RepositoryRoot ?? currentDirectory), configDirectory);
+        var repositoryRoot = ResolvePath(configFile.RepositoryRoot ?? currentDirectory, configDirectory);
 
         var targetProjectFallback = configFile.TargetProjectPath ?? DiscoverTargetProjectPath(repositoryRoot);
         var targetProjectRaw = GetValue(parsed, "target", targetProjectFallback);
