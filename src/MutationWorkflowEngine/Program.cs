@@ -62,21 +62,15 @@ internal static class Program
 
         var baseRef = GetValue(parsed, "base", configFile.BaseRef ?? "origin/main");
 
-        var model = GetValue(parsed, "openai-model", configFile.OpenAiModel ?? "gpt-4.1-mini");
+        var openAiBaseUrl = GetValue(parsed, "openai-base-url", configFile.OpenAiBaseUrl ?? "https://api.openai.com/v1/");
+        var model = GetValue(parsed, "openai-model", configFile.OpenAiModel ?? "gpt-4o");
         var apiKey = GetValue(parsed, "openai-key", configFile.OpenAiApiKey ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? string.Empty);
 
-        var useGeminiFallback = GetBool(parsed, "gemini-fallback", configFile.UseGeminiFallback, true);
-        var googleApiKey = GetValue(parsed, "google-key", configFile.GoogleApiKey ?? Environment.GetEnvironmentVariable("GOOGLE_API_KEY") ?? string.Empty);
-        var geminiModel = GetValue(parsed, "gemini-model", configFile.GeminiModel ?? "gemini-3.5-flash");
-
         var hasOpenAi = !string.IsNullOrWhiteSpace(apiKey) && !string.IsNullOrWhiteSpace(model);
-        var hasGemini = useGeminiFallback &&
-                        !string.IsNullOrWhiteSpace(googleApiKey) &&
-                        !string.IsNullOrWhiteSpace(geminiModel);
 
-        if (!hasOpenAi && !hasGemini)
+        if (!hasOpenAi)
         {
-            throw new InvalidOperationException("No AI provider configured. Provide OpenAiApiKey/OpenAiModel or enable Gemini fallback with GoogleApiKey/GeminiModel.");
+            throw new InvalidOperationException("No AI provider configured. Provide OpenAiApiKey/OpenAiModel.");
         }
 
         var commitAndPush = GetBool(parsed, "commit", configFile.CommitAndPush, true);
@@ -92,11 +86,9 @@ internal static class Program
             string.IsNullOrWhiteSpace(testProjectPath) ? null : Path.GetFullPath(testProjectPath),
             Path.GetFullPath(reportsDir),
             baseRef,
+            openAiBaseUrl,
             model,
             apiKey,
-            useGeminiFallback,
-            googleApiKey,
-            geminiModel,
             commitAndPush,
             Math.Max(1, generationMaxIterations),
             maxChars,

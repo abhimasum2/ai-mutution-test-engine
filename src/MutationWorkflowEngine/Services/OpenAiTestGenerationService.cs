@@ -1,5 +1,6 @@
-using System.Net.Http.Headers;
-using System.Text;
+using Microsoft.Extensions.AI;
+using OpenAI;
+using System.ClientModel;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using MutationWorkflowEngine.Models;
@@ -8,12 +9,6 @@ namespace MutationWorkflowEngine.Services;
 
 internal sealed class OpenAiTestGenerationService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        PropertyNameCaseInsensitive = true,
-        WriteIndented = true
-    };
-
     public async Task<IReadOnlyList<GeneratedTestPatch>> GenerateTestsAsync(
         AppConfig config,
         TestingFramework framework,
@@ -21,29 +16,13 @@ internal sealed class OpenAiTestGenerationService
         IReadOnlyList<(string SourceFileAbsolute, string RelativeSourceFile, string TestFileAbsolute, string RelativeTestFile)> generationPlan,
         CancellationToken cancellationToken)
     {
-        using var openAiHttp = new HttpClient
-        {
-            Timeout = TimeSpan.FromMinutes(config.ProcessTimeoutMinutes)
-        };
-        if (!string.IsNullOrWhiteSpace(config.OpenAiApiKey))
-        {
-            openAiHttp.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", config.OpenAiApiKey);
-        }
-
-        using var geminiHttp = new HttpClient
-        {
-            Timeout = TimeSpan.FromMinutes(config.ProcessTimeoutMinutes)
-        };
-
         var canUseOpenAi = !string.IsNullOrWhiteSpace(config.OpenAiApiKey) && !string.IsNullOrWhiteSpace(config.OpenAiModel);
-        var canUseGemini = config.UseGeminiFallback &&
-                           !string.IsNullOrWhiteSpace(config.GoogleApiKey) &&
-                           !string.IsNullOrWhiteSpace(config.GeminiModel);
-
-        if (!canUseOpenAi && !canUseGemini)
+        if (!canUseOpenAi)
         {
-            throw new InvalidOperationException("No AI generation provider available (OpenAI/Gemini). Check configuration.");
+            throw new InvalidOperationException("No OpenAI provider configured. Check OpenAiApiKey and OpenAiModel.");
         }
+
+        var openAiClient = CreateChatClient(config);
 
         var semaphore = new SemaphoreSlim(config.MaxConcurrency);
         var tasks = generationPlan.Select(async item =>
@@ -51,7 +30,7 @@ internal sealed class OpenAiTestGenerationService
             await semaphore.WaitAsync(cancellationToken);
             try
             {
-                return await GenerateSinglePatchAsync(openAiHttp, geminiHttp, config, framework, preCommitSummary, item, canUseOpenAi, canUseGemini, cancellationToken);
+                return await GenerateSinglePatchAsync(openAiClient, config, framework, preCommitSummary, item, cancellationToken);
             }
             finally
             {
@@ -63,15 +42,12 @@ internal sealed class OpenAiTestGenerationService
         return generated.Where(p => p is not null).Cast<GeneratedTestPatch>().ToList();
     }
 
-    private async Task<GeneratedTestPatch?> GenerateSinglePatchAsync(
-        HttpClient openAiHttp,
-        HttpClient geminiHttp,
+    private static async Task<GeneratedTestPatch?> GenerateSinglePatchAsync(
+        IChatClient openAiClient,
         AppConfig config,
         TestingFramework framework,
         MutationReportSummary preCommitSummary,
         (string SourceFileAbsolute, string RelativeSourceFile, string TestFileAbsolute, string RelativeTestFile) item,
-        bool canUseOpenAi,
-        bool canUseGemini,
         CancellationToken cancellationToken)
     {
         var sourceContent = await ReadTrimmedAsync(item.SourceFileAbsolute, config.MaxSourceFileChars, cancellationToken);
@@ -88,127 +64,53 @@ internal sealed class OpenAiTestGenerationService
 
         var prompt = BuildPrompt(framework, item.RelativeSourceFile, item.RelativeTestFile, mutationHints, sourceContent, existingTestContent);
 
-        if (canUseOpenAi)
-        {
-            try
-            {
-                var openAiText = await GenerateWithOpenAiAsync(openAiHttp, config, prompt, cancellationToken);
-                return ParsePatch(openAiText, item.RelativeTestFile);
-            }
-            catch (Exception ex) when (canUseGemini)
-            {
-                Console.WriteLine($"OpenAI generation failed for {item.RelativeSourceFile}. Falling back to Gemini. Reason: {ex.Message}");
-            }
-        }
-
-        if (canUseGemini)
-        {
-            var geminiText = await GenerateWithGeminiAsync(geminiHttp, config, prompt, cancellationToken);
-            return ParsePatch(geminiText, item.RelativeTestFile);
-        }
-
-        throw new InvalidOperationException($"Failed to generate tests for {item.RelativeSourceFile}.");
+        var openAiText = await GenerateWithOpenAiAsync(openAiClient, prompt, cancellationToken);
+        return ParsePatch(openAiText, item.RelativeTestFile);
     }
 
     private static async Task<string> GenerateWithOpenAiAsync(
-        HttpClient http,
-        AppConfig config,
+        IChatClient chatClient,
         string prompt,
         CancellationToken cancellationToken)
     {
-        var requestPayload = new
+        var response = await chatClient.GetResponseAsync(prompt, cancellationToken: cancellationToken);
+        if (string.IsNullOrWhiteSpace(response.Text))
         {
-            model = config.OpenAiModel,
-            input = prompt,
-            max_output_tokens = 4000
-        };
-
-        using var response = await http.PostAsync(
-            "https://api.openai.com/v1/responses",
-            new StringContent(JsonSerializer.Serialize(requestPayload, JsonOptions), Encoding.UTF8, "application/json"),
-            cancellationToken);
-
-        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new InvalidOperationException($"OpenAI request failed: {(int)response.StatusCode} {payload}");
+            throw new InvalidOperationException("OpenAI response did not contain usable text.");
         }
 
-        return ExtractResponseText(payload);
+        return response.Text;
     }
 
-    private static async Task<string> GenerateWithGeminiAsync(
-        HttpClient http,
-        AppConfig config,
-        string prompt,
-        CancellationToken cancellationToken)
+    private static IChatClient CreateChatClient(AppConfig config)
     {
-        var endpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{Uri.EscapeDataString(config.GeminiModel)}:generateContent?key={Uri.EscapeDataString(config.GoogleApiKey)}";
-        var payloadObj = new
-        {
-            contents = new[]
-            {
-                new
+        var baseUrl = NormalizeBaseUrl(config.OpenAiBaseUrl);
+        var isDefaultEndpoint = string.Equals(baseUrl, "https://api.openai.com/v1/", StringComparison.OrdinalIgnoreCase);
+
+        var client = isDefaultEndpoint
+            ? new OpenAIClient(config.OpenAiApiKey)
+            : new OpenAIClient(
+                new ApiKeyCredential(config.OpenAiApiKey),
+                new OpenAIClientOptions
                 {
-                    parts = new[] { new { text = prompt } }
-                }
-            },
-            generationConfig = new
-            {
-                temperature = 0.2,
-                maxOutputTokens = 4000,
-                responseMimeType = "application/json"
-            }
-        };
+                    Endpoint = new Uri(baseUrl)
+                });
 
-        using var response = await http.PostAsync(
-            endpoint,
-            new StringContent(JsonSerializer.Serialize(payloadObj, JsonOptions), Encoding.UTF8, "application/json"),
-            cancellationToken);
-
-        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new InvalidOperationException($"Gemini request failed: {(int)response.StatusCode} {payload}");
-        }
-
-        return ExtractGeminiText(payload);
+        return client.GetChatClient(config.OpenAiModel).AsIChatClient();
     }
 
-    private static string ExtractGeminiText(string responsePayload)
+    private static string NormalizeBaseUrl(string? baseUrl)
     {
-        using var doc = JsonDocument.Parse(responsePayload);
-        var root = doc.RootElement;
+        var trimmed = string.IsNullOrWhiteSpace(baseUrl)
+            ? "https://api.openai.com/v1/"
+            : baseUrl.Trim();
 
-        if (root.TryGetProperty("candidates", out var candidates) && candidates.ValueKind == JsonValueKind.Array)
+        if (!trimmed.EndsWith("/", StringComparison.Ordinal))
         {
-            foreach (var candidate in candidates.EnumerateArray())
-            {
-                if (!candidate.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Object)
-                {
-                    continue;
-                }
-
-                if (!content.TryGetProperty("parts", out var parts) || parts.ValueKind != JsonValueKind.Array)
-                {
-                    continue;
-                }
-
-                foreach (var part in parts.EnumerateArray())
-                {
-                    if (part.TryGetProperty("text", out var textProp) && textProp.ValueKind == JsonValueKind.String)
-                    {
-                        var text = textProp.GetString();
-                        if (!string.IsNullOrWhiteSpace(text))
-                        {
-                            return text;
-                        }
-                    }
-                }
-            }
+            trimmed += "/";
         }
 
-        throw new InvalidOperationException("Gemini response did not contain usable text.");
+        return trimmed;
     }
 
     private static string BuildPrompt(
@@ -293,7 +195,6 @@ Existing tests (may be empty):
             .Replace('\n', '/')
             .Replace('\\', '/');
 
-        // Compress duplicate separators and remove accidental spaces around separators.
         normalized = Regex.Replace(normalized, @"\s*/\s*", "/");
         normalized = Regex.Replace(normalized, @"/{2,}", "/");
 
@@ -364,42 +265,6 @@ Existing tests (may be empty):
         {
             return false;
         }
-    }
-
-    private static string ExtractResponseText(string responsePayload)
-    {
-        using var doc = JsonDocument.Parse(responsePayload);
-        var root = doc.RootElement;
-
-        if (root.TryGetProperty("output_text", out var outputText) && outputText.ValueKind == JsonValueKind.String)
-        {
-            return outputText.GetString() ?? string.Empty;
-        }
-
-        if (root.TryGetProperty("output", out var outputArray) && outputArray.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in outputArray.EnumerateArray())
-            {
-                if (!item.TryGetProperty("content", out var contentArray) || contentArray.ValueKind != JsonValueKind.Array)
-                {
-                    continue;
-                }
-
-                foreach (var contentItem in contentArray.EnumerateArray())
-                {
-                    if (contentItem.TryGetProperty("text", out var textProp) && textProp.ValueKind == JsonValueKind.String)
-                    {
-                        var text = textProp.GetString();
-                        if (!string.IsNullOrWhiteSpace(text))
-                        {
-                            return text;
-                        }
-                    }
-                }
-            }
-        }
-
-        throw new InvalidOperationException("Unable to extract textual response from OpenAI payload.");
     }
 
     private static async Task<string> ReadTrimmedAsync(string filePath, int maxChars, CancellationToken cancellationToken)
