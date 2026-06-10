@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using MutationWorkflowEngine.Models;
 
 namespace MutationWorkflowEngine.Services;
@@ -13,6 +14,10 @@ internal sealed class WorkflowOrchestrator(
 {
     public async Task RunAsync(AppConfig config, CancellationToken cancellationToken)
     {
+        var totalTimer = Stopwatch.StartNew();
+        var startedAtUtc = DateTime.UtcNow;
+        var stageTimings = new List<PerformanceStageTiming>();
+
         var timeout = TimeSpan.FromMinutes(config.ProcessTimeoutMinutes);
         Directory.CreateDirectory(config.ReportsDirectory);
 
@@ -38,6 +43,7 @@ internal sealed class WorkflowOrchestrator(
         var postDir = Path.Combine(config.ReportsDirectory, "post-commit");
 
         Log(config, "Running pre-commit mutation testing...");
+        var preStageTimer = Stopwatch.StartNew();
         var preReportPath = await stryker.RunMutationAsync(
             config.RepositoryRoot,
             config.TargetProjectPath,
@@ -47,6 +53,8 @@ internal sealed class WorkflowOrchestrator(
             "pre",
             timeout,
             cancellationToken);
+        preStageTimer.Stop();
+        stageTimings.Add(new PerformanceStageTiming("Pre-commit Mutation", preStageTimer.Elapsed));
 
         var preSummary = await stryker.ParseReportAsync(preReportPath, cancellationToken);
         Log(config, $"Pre-commit score: {preSummary.Score:F2}%");
@@ -59,11 +67,15 @@ internal sealed class WorkflowOrchestrator(
 
         IReadOnlyList<string> updatedTests = Array.Empty<string>();
         ProcessResult? lastBuildResult = null;
+        var allTokenUsageRecords = new List<TokenUsageRecord>();
 
+        var aiStageTimer = Stopwatch.StartNew();
         for (var attempt = 1; attempt <= config.GenerationMaxIterations; attempt++)
         {
             Log(config, $"Generating test updates from mutation report with AI (attempt {attempt}/{config.GenerationMaxIterations})...");
-            var patches = await ai.GenerateTestsAsync(config, framework, preSummary, generationPlan, cancellationToken);
+            var (patches, tokenUsage) = await ai.GenerateTestsAsync(config, framework, preSummary, generationPlan, cancellationToken);
+            allTokenUsageRecords.AddRange(tokenUsage.Records);
+            Log(config, $"Tokens used this attempt — input: {tokenUsage.TotalInputTokens}, output: {tokenUsage.TotalOutputTokens}");
             updatedTests = await integration.ApplyGeneratedPatchesAsync(config.RepositoryRoot, patches, cancellationToken);
             Log(config, $"Updated/created test files: {updatedTests.Count}");
 
@@ -92,19 +104,25 @@ internal sealed class WorkflowOrchestrator(
                     "Generated tests did not build after all attempts. Last build output:\n" + buildDetails);
             }
         }
+        aiStageTimer.Stop();
+        stageTimings.Add(new PerformanceStageTiming("AI Test Generation", aiStageTimer.Elapsed));
 
         if (config.CommitAndPush)
         {
             Log(config, "Committing and pushing generated tests...");
+            var commitStageTimer = Stopwatch.StartNew();
             await git.CommitAndPushAsync(
                 config.RepositoryRoot,
                 updatedTests,
                 "test: AI-generated mutation coverage improvements",
                 cancellationToken,
                 timeout);
+            commitStageTimer.Stop();
+            stageTimings.Add(new PerformanceStageTiming("Commit and Push", commitStageTimer.Elapsed));
         }
 
         Log(config, "Running post-commit mutation testing...");
+        var postStageTimer = Stopwatch.StartNew();
         var postReportPath = await stryker.RunMutationAsync(
             config.RepositoryRoot,
             config.TargetProjectPath,
@@ -114,6 +132,8 @@ internal sealed class WorkflowOrchestrator(
             "post",
             timeout,
             cancellationToken);
+        postStageTimer.Stop();
+        stageTimings.Add(new PerformanceStageTiming("Post-commit Mutation", postStageTimer.Elapsed));
 
         var postSummary = await stryker.ParseReportAsync(postReportPath, cancellationToken);
         Log(config, $"Post-commit score: {postSummary.Score:F2}%");
@@ -123,6 +143,26 @@ internal sealed class WorkflowOrchestrator(
 
         Log(config, $"Unified report JSON: {jsonPath}");
         Log(config, $"Unified report Markdown: {markdownPath}");
+
+        Log(config, "Creating token usage report...");
+        var finalTokenReport = new TokenUsageReport(
+            allTokenUsageRecords.Sum(r => r.InputTokens),
+            allTokenUsageRecords.Sum(r => r.OutputTokens),
+            allTokenUsageRecords.Sum(r => r.TotalTokens),
+            allTokenUsageRecords);
+        var tokenReportPath = await reports.WriteTokenUsageReportAsync(config.ReportsDirectory, finalTokenReport, cancellationToken);
+        Log(config, $"Token usage report: {tokenReportPath}");
+        Log(config, $"Total tokens consumed — input: {finalTokenReport.TotalInputTokens}, output: {finalTokenReport.TotalOutputTokens}, total: {finalTokenReport.TotalTokens}");
+
+        totalTimer.Stop();
+        var performanceReport = new PerformanceReport(startedAtUtc, DateTime.UtcNow, totalTimer.Elapsed, stageTimings);
+        var perfReportPath = await reports.WritePerformanceReportAsync(config.ReportsDirectory, performanceReport, cancellationToken);
+        Log(config, $"Performance report: {perfReportPath}");
+        Log(config, $"Total engine runtime: {totalTimer.Elapsed:hh\\:mm\\:ss}");
+
+        Log(config, "Creating combined summary HTML...");
+        var htmlPath = await reports.WriteSummaryHtmlAsync(config.ReportsDirectory, preSummary, postSummary, finalTokenReport, performanceReport, cancellationToken);
+        Log(config, $"Summary HTML: {htmlPath}");
     }
 
     private static void Log(AppConfig config, string message)

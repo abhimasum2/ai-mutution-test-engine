@@ -69,3 +69,23 @@ internal sealed record GeneratedTestPatch(
     string RelativeTestFilePath,
     string Content,
     string Reasoning);
+
+internal sealed record TokenUsageRecord(
+    string SourceFile,
+    int InputTokens,
+    int OutputTokens,
+    int TotalTokens);
+
+internal sealed record TokenUsageReport(
+    int TotalInputTokens,
+    int TotalOutputTokens,
+    int TotalTokens,
+    IReadOnlyList<TokenUsageRecord> Records);
+
+internal sealed record PerformanceStageTiming(string Stage, TimeSpan Duration);
+
+internal sealed record PerformanceReport(
+    DateTime StartedAtUtc,
+    DateTime FinishedAtUtc,
+    TimeSpan TotalDuration,
+    IReadOnlyList<PerformanceStageTiming> Stages);

@@ -9,7 +9,7 @@ namespace MutationWorkflowEngine.Services;
 
 internal sealed class OpenAiTestGenerationService
 {
-    public async Task<IReadOnlyList<GeneratedTestPatch>> GenerateTestsAsync(
+    public async Task<(IReadOnlyList<GeneratedTestPatch> Patches, TokenUsageReport TokenUsage)> GenerateTestsAsync(
         AppConfig config,
         TestingFramework framework,
         MutationReportSummary preCommitSummary,
@@ -38,11 +38,25 @@ internal sealed class OpenAiTestGenerationService
             }
         });
 
-        var generated = await Task.WhenAll(tasks);
-        return generated.Where(p => p is not null).Cast<GeneratedTestPatch>().ToList();
+        var results = await Task.WhenAll(tasks);
+
+        var patches = results.Where(r => r.Patch is not null).Select(r => r.Patch!).ToList();
+        var usageRecords = results.Select(r => new TokenUsageRecord(
+            r.SourceFile,
+            r.InputTokens,
+            r.OutputTokens,
+            r.InputTokens + r.OutputTokens)).ToList();
+
+        var tokenUsage = new TokenUsageReport(
+            usageRecords.Sum(u => u.InputTokens),
+            usageRecords.Sum(u => u.OutputTokens),
+            usageRecords.Sum(u => u.TotalTokens),
+            usageRecords);
+
+        return (patches, tokenUsage);
     }
 
-    private static async Task<GeneratedTestPatch?> GenerateSinglePatchAsync(
+    private static async Task<(GeneratedTestPatch? Patch, string SourceFile, int InputTokens, int OutputTokens)> GenerateSinglePatchAsync(
         IChatClient openAiClient,
         AppConfig config,
         TestingFramework framework,
@@ -64,11 +78,11 @@ internal sealed class OpenAiTestGenerationService
 
         var prompt = BuildPrompt(framework, item.RelativeSourceFile, item.RelativeTestFile, mutationHints, sourceContent, existingTestContent);
 
-        var openAiText = await GenerateWithOpenAiAsync(openAiClient, prompt, cancellationToken);
-        return ParsePatch(openAiText, item.RelativeTestFile);
+        var (openAiText, inputTokens, outputTokens) = await GenerateWithOpenAiAsync(openAiClient, prompt, cancellationToken);
+        return (ParsePatch(openAiText, item.RelativeTestFile), item.RelativeSourceFile, inputTokens, outputTokens);
     }
 
-    private static async Task<string> GenerateWithOpenAiAsync(
+    private static async Task<(string Text, int InputTokens, int OutputTokens)> GenerateWithOpenAiAsync(
         IChatClient chatClient,
         string prompt,
         CancellationToken cancellationToken)
@@ -79,7 +93,9 @@ internal sealed class OpenAiTestGenerationService
             throw new InvalidOperationException("OpenAI response did not contain usable text.");
         }
 
-        return response.Text;
+        var inputTokens = (int)(response.Usage?.InputTokenCount ?? 0);
+        var outputTokens = (int)(response.Usage?.OutputTokenCount ?? 0);
+        return (response.Text, inputTokens, outputTokens);
     }
 
     private static IChatClient CreateChatClient(AppConfig config)
