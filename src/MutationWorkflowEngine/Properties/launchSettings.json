@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "MutationWorkflowEngine": {
+      "commandName": "Project",
+      "workingDirectory": "$(ProjectDir)",
+      "commandLineArgs": "--artifact ../../../Artifact --main ../../../ai-mutution-test-main-code"
+    }
+  }
+}
