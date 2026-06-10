@@ -6,6 +6,9 @@ namespace MutationWorkflowEngine;
 
 internal static class Program
 {
+    private const string DefaultBaseRef = "origin/main";
+    private const bool DefaultCommitAndPush = true;
+
     private static async Task<int> Main(string[] args)
     {
         try
@@ -60,7 +63,7 @@ internal static class Program
 
         var reportsDir = ResolvePath(reportsRaw, repositoryRoot);
 
-        var baseRef = GetValue(parsed, "base", configFile.BaseRef ?? "origin/main");
+        var baseRef = GetValue(parsed, "base", configFile.BaseRef ?? DefaultBaseRef);
 
         var openAiBaseUrl = GetValue(parsed, "openai-base-url", configFile.OpenAiBaseUrl ?? "https://api.openai.com/v1/");
         var model = GetValue(parsed, "openai-model", configFile.OpenAiModel ?? "gpt-4o");
@@ -73,7 +76,7 @@ internal static class Program
             throw new InvalidOperationException("No AI provider configured. Provide OpenAiApiKey/OpenAiModel.");
         }
 
-        var commitAndPush = GetBool(parsed, "commit", configFile.CommitAndPush, true);
+        var commitAndPush = GetBool(parsed, "commit", configFile.CommitAndPush, DefaultCommitAndPush);
         var verbose = GetBool(parsed, "verbose", configFile.Verbose, true);
         var generationMaxIterations = GetInt(parsed, "generation-max-iterations", configFile.GenerationMaxIterations, 3);
         var maxChars = GetInt(parsed, "max-source-chars", configFile.MaxSourceFileChars, 24000);
