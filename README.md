@@ -1,6 +1,6 @@
 # MutationWorkflowEngine
 
-A .NET 8 console application for PR-focused mutation testing and AI-assisted test generation.
+A .NET 10 console application for PR-focused mutation testing and AI-assisted test generation.
 
 ## What it does
 
@@ -15,18 +15,39 @@ A .NET 8 console application for PR-focused mutation testing and AI-assisted tes
 
 ## Prerequisites
 
-- .NET SDK 8+
+- .NET SDK 10+
 - git configured in PATH
 - Stryker.NET CLI available (`dotnet tool install -g dotnet-stryker`)
 - Update `input.json` with your real project paths
 - OpenAI API key in `input.json` (`OpenAiApiKey`) or env var `OPENAI_API_KEY`
-- Optional local fallback: Ollama running at `http://localhost:11434`
+- Optional local fallback: Gemini via `GoogleApiKey` in `input.json` or env var `GOOGLE_API_KEY`
 
 ## Build
 
 ```powershell
 dotnet build src/MutationWorkflowEngine/MutationWorkflowEngine.csproj
 ```
+
+## Local quick setup
+
+```powershell
+# from ai-mutution-test-engine
+$env:GOOGLE_API_KEY = "your-test-key"
+
+# ensure at least one changed .cs file exists for diff against BaseRef (default HEAD~1)
+Set-Location ../ai-mutution-test-main-code
+git checkout -b local/mutation-test
+Add-Content ./src/InvestmentCalculator/InvestmentCalculator.cs "// local mutation test marker"
+
+Set-Location ../ai-mutution-test-engine
+./run-local.ps1
+```
+
+Notes:
+
+- `input.json` is preconfigured for local testing and uses `BaseRef: HEAD~1`.
+- `CommitAndPush` is disabled for local runs.
+- Replace `GoogleApiKey` in `input.json` or use `GOOGLE_API_KEY` env var.
 
 ## Run
 
@@ -46,9 +67,9 @@ Main settings are loaded from `input.json`:
 - `BaseRef`
 - `OpenAiModel`
 - `OpenAiApiKey` (optional if env var is set)
-- `UseOllamaFallback`
-- `OllamaBaseUrl`
-- `OllamaModel`
+- `UseGeminiFallback`
+- `GoogleApiKey` (optional if env var is set)
+- `GeminiModel`
 - `CommitAndPush`
 - `MaxSourceFileChars`
 - `MaxConcurrency`
@@ -68,9 +89,9 @@ All config keys can still be overridden at runtime when needed:
 - `--reports` report output folder
 - `--openai-key` OpenAI API key
 - `--openai-model` OpenAI model name
-- `--ollama-fallback` true/false to enable local fallback
-- `--ollama-url` Ollama base URL (default `http://localhost:11434`)
-- `--ollama-model` Ollama model name
+- `--gemini-fallback` true/false to enable Gemini fallback
+- `--google-key` Google API key
+- `--gemini-model` Gemini model name (default `gemini-3.5-flash`)
 - `--commit` true/false to commit and push generated tests
 - `--max-source-chars` per-file prompt cap for large files
 - `--max-concurrency` OpenAI parallel generation workers

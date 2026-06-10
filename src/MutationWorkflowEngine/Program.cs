@@ -64,18 +64,18 @@ internal static class Program
         var model = GetValue(parsed, "openai-model", configFile.OpenAiModel ?? "gpt-4.1-mini");
         var apiKey = GetValue(parsed, "openai-key", configFile.OpenAiApiKey ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? string.Empty);
 
-        var useOllamaFallback = GetBool(parsed, "ollama-fallback", configFile.UseOllamaFallback, true);
-        var ollamaBaseUrl = GetValue(parsed, "ollama-url", configFile.OllamaBaseUrl ?? "http://localhost:11434");
-        var ollamaModel = GetValue(parsed, "ollama-model", configFile.OllamaModel ?? "qwen2.5-coder:7b");
+        var useGeminiFallback = GetBool(parsed, "gemini-fallback", configFile.UseGeminiFallback, true);
+        var googleApiKey = GetValue(parsed, "google-key", configFile.GoogleApiKey ?? Environment.GetEnvironmentVariable("GOOGLE_API_KEY") ?? string.Empty);
+        var geminiModel = GetValue(parsed, "gemini-model", configFile.GeminiModel ?? "gemini-3.5-flash");
 
         var hasOpenAi = !string.IsNullOrWhiteSpace(apiKey) && !string.IsNullOrWhiteSpace(model);
-        var hasOllama = useOllamaFallback &&
-                        !string.IsNullOrWhiteSpace(ollamaBaseUrl) &&
-                        !string.IsNullOrWhiteSpace(ollamaModel);
+        var hasGemini = useGeminiFallback &&
+                        !string.IsNullOrWhiteSpace(googleApiKey) &&
+                        !string.IsNullOrWhiteSpace(geminiModel);
 
-        if (!hasOpenAi && !hasOllama)
+        if (!hasOpenAi && !hasGemini)
         {
-            throw new InvalidOperationException("No AI provider configured. Provide OpenAiApiKey/OpenAiModel or enable Ollama fallback with OllamaBaseUrl/OllamaModel.");
+            throw new InvalidOperationException("No AI provider configured. Provide OpenAiApiKey/OpenAiModel or enable Gemini fallback with GoogleApiKey/GeminiModel.");
         }
 
         var commitAndPush = GetBool(parsed, "commit", configFile.CommitAndPush, true);
@@ -93,9 +93,9 @@ internal static class Program
             baseRef,
             model,
             apiKey,
-            useOllamaFallback,
-            ollamaBaseUrl,
-            ollamaModel,
+            useGeminiFallback,
+            googleApiKey,
+            geminiModel,
             commitAndPush,
             Math.Max(1, generationMaxIterations),
             maxChars,

@@ -30,19 +30,19 @@ internal sealed class OpenAiTestGenerationService
             openAiHttp.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", config.OpenAiApiKey);
         }
 
-        using var ollamaHttp = new HttpClient
+        using var geminiHttp = new HttpClient
         {
             Timeout = TimeSpan.FromMinutes(config.ProcessTimeoutMinutes)
         };
 
         var canUseOpenAi = !string.IsNullOrWhiteSpace(config.OpenAiApiKey) && !string.IsNullOrWhiteSpace(config.OpenAiModel);
-        var canUseOllama = config.UseOllamaFallback &&
-                           !string.IsNullOrWhiteSpace(config.OllamaBaseUrl) &&
-                           !string.IsNullOrWhiteSpace(config.OllamaModel);
+        var canUseGemini = config.UseGeminiFallback &&
+                           !string.IsNullOrWhiteSpace(config.GoogleApiKey) &&
+                           !string.IsNullOrWhiteSpace(config.GeminiModel);
 
-        if (!canUseOpenAi && !canUseOllama)
+        if (!canUseOpenAi && !canUseGemini)
         {
-            throw new InvalidOperationException("No AI generation provider available (OpenAI/Ollama). Check configuration.");
+            throw new InvalidOperationException("No AI generation provider available (OpenAI/Gemini). Check configuration.");
         }
 
         var semaphore = new SemaphoreSlim(config.MaxConcurrency);
@@ -51,7 +51,7 @@ internal sealed class OpenAiTestGenerationService
             await semaphore.WaitAsync(cancellationToken);
             try
             {
-                return await GenerateSinglePatchAsync(openAiHttp, ollamaHttp, config, framework, preCommitSummary, item, canUseOpenAi, canUseOllama, cancellationToken);
+                return await GenerateSinglePatchAsync(openAiHttp, geminiHttp, config, framework, preCommitSummary, item, canUseOpenAi, canUseGemini, cancellationToken);
             }
             finally
             {
@@ -65,13 +65,13 @@ internal sealed class OpenAiTestGenerationService
 
     private async Task<GeneratedTestPatch?> GenerateSinglePatchAsync(
         HttpClient openAiHttp,
-        HttpClient ollamaHttp,
+        HttpClient geminiHttp,
         AppConfig config,
         TestingFramework framework,
         MutationReportSummary preCommitSummary,
         (string SourceFileAbsolute, string RelativeSourceFile, string TestFileAbsolute, string RelativeTestFile) item,
         bool canUseOpenAi,
-        bool canUseOllama,
+        bool canUseGemini,
         CancellationToken cancellationToken)
     {
         var sourceContent = await ReadTrimmedAsync(item.SourceFileAbsolute, config.MaxSourceFileChars, cancellationToken);
@@ -95,16 +95,16 @@ internal sealed class OpenAiTestGenerationService
                 var openAiText = await GenerateWithOpenAiAsync(openAiHttp, config, prompt, cancellationToken);
                 return ParsePatch(openAiText, item.RelativeTestFile);
             }
-            catch (Exception ex) when (canUseOllama)
+            catch (Exception ex) when (canUseGemini)
             {
-                Console.WriteLine($"OpenAI generation failed for {item.RelativeSourceFile}. Falling back to Ollama. Reason: {ex.Message}");
+                Console.WriteLine($"OpenAI generation failed for {item.RelativeSourceFile}. Falling back to Gemini. Reason: {ex.Message}");
             }
         }
 
-        if (canUseOllama)
+        if (canUseGemini)
         {
-            var ollamaText = await GenerateWithOllamaAsync(ollamaHttp, config, prompt, cancellationToken);
-            return ParsePatch(ollamaText, item.RelativeTestFile);
+            var geminiText = await GenerateWithGeminiAsync(geminiHttp, config, prompt, cancellationToken);
+            return ParsePatch(geminiText, item.RelativeTestFile);
         }
 
         throw new InvalidOperationException($"Failed to generate tests for {item.RelativeSourceFile}.");
@@ -137,22 +137,27 @@ internal sealed class OpenAiTestGenerationService
         return ExtractResponseText(payload);
     }
 
-    private static async Task<string> GenerateWithOllamaAsync(
+    private static async Task<string> GenerateWithGeminiAsync(
         HttpClient http,
         AppConfig config,
         string prompt,
         CancellationToken cancellationToken)
     {
-        var endpoint = config.OllamaBaseUrl.TrimEnd('/') + "/api/generate";
+        var endpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{Uri.EscapeDataString(config.GeminiModel)}:generateContent?key={Uri.EscapeDataString(config.GoogleApiKey)}";
         var payloadObj = new
         {
-            model = config.OllamaModel,
-            prompt,
-            stream = false,
-            format = "json",
-            options = new
+            contents = new[]
             {
-                temperature = 0.2
+                new
+                {
+                    parts = new[] { new { text = prompt } }
+                }
+            },
+            generationConfig = new
+            {
+                temperature = 0.2,
+                maxOutputTokens = 4000,
+                responseMimeType = "application/json"
             }
         };
 
@@ -164,21 +169,46 @@ internal sealed class OpenAiTestGenerationService
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Ollama request failed: {(int)response.StatusCode} {payload}");
+            throw new InvalidOperationException($"Gemini request failed: {(int)response.StatusCode} {payload}");
         }
 
-        using var doc = JsonDocument.Parse(payload);
+        return ExtractGeminiText(payload);
+    }
+
+    private static string ExtractGeminiText(string responsePayload)
+    {
+        using var doc = JsonDocument.Parse(responsePayload);
         var root = doc.RootElement;
-        if (root.TryGetProperty("response", out var responseText) && responseText.ValueKind == JsonValueKind.String)
+
+        if (root.TryGetProperty("candidates", out var candidates) && candidates.ValueKind == JsonValueKind.Array)
         {
-            var text = responseText.GetString() ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(text))
+            foreach (var candidate in candidates.EnumerateArray())
             {
-                return text;
+                if (!candidate.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                if (!content.TryGetProperty("parts", out var parts) || parts.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                foreach (var part in parts.EnumerateArray())
+                {
+                    if (part.TryGetProperty("text", out var textProp) && textProp.ValueKind == JsonValueKind.String)
+                    {
+                        var text = textProp.GetString();
+                        if (!string.IsNullOrWhiteSpace(text))
+                        {
+                            return text;
+                        }
+                    }
+                }
             }
         }
 
-        throw new InvalidOperationException("Ollama response did not contain usable text.");
+        throw new InvalidOperationException("Gemini response did not contain usable text.");
     }
 
     private static string BuildPrompt(
@@ -197,7 +227,7 @@ internal sealed class OpenAiTestGenerationService
             _ => "Use the existing framework conventions from test file."
         };
 
-                return $@"You are generating robust .NET unit tests to kill survived mutation cases.
+        return $@"You are generating robust .NET unit tests to kill survived mutation cases.
 Return only JSON with this exact schema:
 {{
     ""relativeTestFilePath"": ""{targetTestFile}"",
