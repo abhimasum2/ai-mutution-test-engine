@@ -24,7 +24,7 @@ internal sealed class TestIntegrationService
             var sourceName = Path.GetFileNameWithoutExtension(changedRelative);
             var preferredTestName = sourceName + "Tests.cs";
             var preferredTestPath = FindExistingTestFile(testProjectDirectory, preferredTestName)
-                ?? Path.Combine(testProjectDirectory, preferredTestName);
+                ?? BuildNewTestFilePath(testProjectDirectory, changedRelative, preferredTestName);
 
             var relativeTestPath = Path.GetRelativePath(repositoryRoot, preferredTestPath);
             plan.Add((sourceAbsolute, changedRelative, preferredTestPath, relativeTestPath));
@@ -110,5 +110,30 @@ internal sealed class TestIntegrationService
             .FirstOrDefault(path => Path.GetFileName(path).StartsWith(preferredName.Replace("Tests.cs", string.Empty), StringComparison.OrdinalIgnoreCase));
 
         return fuzzy;
+    }
+
+    private static string BuildNewTestFilePath(string testProjectDirectory, string relativeSourceFile, string preferredTestName)
+    {
+        var sourceDirectory = Path.GetDirectoryName(relativeSourceFile) ?? string.Empty;
+        var normalizedSourceDirectory = sourceDirectory
+            .Replace('/', Path.DirectorySeparatorChar)
+            .Replace('\\', Path.DirectorySeparatorChar)
+            .Trim(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        var segments = normalizedSourceDirectory
+            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Where(segment => !string.IsNullOrWhiteSpace(segment))
+            .ToList();
+
+        if (segments.Count > 0 && segments[0].Equals("src", StringComparison.OrdinalIgnoreCase))
+        {
+            segments.RemoveAt(0);
+        }
+
+        var targetDirectory = segments.Count == 0
+            ? testProjectDirectory
+            : Path.Combine(testProjectDirectory, Path.Combine(segments.ToArray()));
+
+        return Path.Combine(targetDirectory, preferredTestName);
     }
 }
