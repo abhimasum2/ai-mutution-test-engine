@@ -152,6 +152,12 @@ internal sealed class ReportService
                 .Append($"<td>{H(s.Stage)}</td>")
                 .AppendLine($"<td>{FormatDuration(s.Duration)}</td></tr>");
 
+        var preCounts = GetStatusCounts(pre.Mutants);
+        var postCounts = GetStatusCounts(post.Mutants);
+        var mutantRows = new StringBuilder();
+        mutantRows.Append(BuildMutantHtmlRows(pre.Mutants, "Pre-commit"));
+        mutantRows.Append(BuildMutantHtmlRows(post.Mutants, "Post-commit"));
+
         var html = new StringBuilder();
         html.Append(HtmlHead())
             .AppendLine("<h1>Mutation Engine Summary Report</h1>")
@@ -195,6 +201,84 @@ internal sealed class ReportService
             .AppendLine("<table><tr><th>Stage</th><th>Duration</th></tr>")
             .Append(stageRows)
             .AppendLine("</table></div>")
+            .AppendLine("<div class=\"section\"><h2>Unified Mutation Report Mutants</h2>")
+            .AppendLine($"<p><strong>Pre-commit</strong>: Total={pre.Mutants.Count}, Killed={preCounts.Killed}, Survived={preCounts.Survived}, Skipped={preCounts.Skipped}</p>")
+            .AppendLine($"<p><strong>Post-commit</strong>: Total={post.Mutants.Count}, Killed={postCounts.Killed}, Survived={postCounts.Survived}, Skipped={postCounts.Skipped}</p>")
+            .AppendLine("<div class=\"filters\">")
+            .AppendLine("<label for=\"mutantPhaseFilter\">Phase</label>")
+            .AppendLine("<select id=\"mutantPhaseFilter\"><option value=\"all\">All</option><option value=\"pre-commit\">Pre-commit</option><option value=\"post-commit\">Post-commit</option></select>")
+            .AppendLine("<label for=\"mutantStatusFilter\">Status</label>")
+            .AppendLine("<select id=\"mutantStatusFilter\"><option value=\"all\">All</option><option value=\"killed\">Killed</option><option value=\"survived\">Survived</option><option value=\"skipped\">Skipped</option></select>")
+            .AppendLine("<label for=\"mutantFileFilter\">File contains</label>")
+            .AppendLine("<input id=\"mutantFileFilter\" type=\"text\" placeholder=\"e.g. MutationTestingSample\" />")
+            .AppendLine("<label for=\"mutantMutatorFilter\">Mutator contains</label>")
+            .AppendLine("<input id=\"mutantMutatorFilter\" type=\"text\" placeholder=\"e.g. Equality mutation\" />")
+            .AppendLine("<label for=\"mutantPageSize\">Page size</label>")
+            .AppendLine("<select id=\"mutantPageSize\"><option value=\"10\">10</option><option value=\"25\" selected>25</option><option value=\"50\">50</option><option value=\"100\">100</option></select>")
+            .AppendLine("</div>")
+            .AppendLine("<p class=\"meta\" id=\"mutantFilterSummary\">Showing all mutants</p>")
+            .AppendLine("<table id=\"mutantsTable\"><thead><tr><th>Phase</th><th>File</th><th>Line</th><th>Status</th><th>Mutator</th><th>Location</th></tr></thead><tbody id=\"mutantsTableBody\">")
+            .Append(mutantRows)
+            .AppendLine("</tbody></table></div>")
+            .AppendLine("<div class=\"pager\">")
+            .AppendLine("<button id=\"mutantPrevPage\" type=\"button\">Previous</button>")
+            .AppendLine("<span id=\"mutantPageInfo\">Page 1 of 1</span>")
+            .AppendLine("<button id=\"mutantNextPage\" type=\"button\">Next</button>")
+            .AppendLine("</div>")
+            .AppendLine("<script>")
+            .AppendLine("(function(){")
+            .AppendLine("  const phase = document.getElementById('mutantPhaseFilter');")
+            .AppendLine("  const status = document.getElementById('mutantStatusFilter');")
+            .AppendLine("  const file = document.getElementById('mutantFileFilter');")
+            .AppendLine("  const mutator = document.getElementById('mutantMutatorFilter');")
+            .AppendLine("  const pageSize = document.getElementById('mutantPageSize');")
+            .AppendLine("  const prevPage = document.getElementById('mutantPrevPage');")
+            .AppendLine("  const nextPage = document.getElementById('mutantNextPage');")
+            .AppendLine("  const pageInfo = document.getElementById('mutantPageInfo');")
+            .AppendLine("  const summary = document.getElementById('mutantFilterSummary');")
+            .AppendLine("  const rows = Array.from(document.querySelectorAll('#mutantsTableBody tr'));")
+            .AppendLine("  let filteredRows = rows;")
+            .AppendLine("  let currentPage = 1;")
+            .AppendLine("  function renderPage(){")
+            .AppendLine("    const size = Math.max(1, parseInt(pageSize.value || '25', 10));")
+            .AppendLine("    const totalPages = Math.max(1, Math.ceil(filteredRows.length / size));")
+            .AppendLine("    if (currentPage > totalPages) currentPage = totalPages;")
+            .AppendLine("    if (currentPage < 1) currentPage = 1;")
+            .AppendLine("    const start = (currentPage - 1) * size;")
+            .AppendLine("    const end = start + size;")
+            .AppendLine("    rows.forEach(r => r.style.display = 'none');")
+            .AppendLine("    filteredRows.slice(start, end).forEach(r => r.style.display = '');")
+            .AppendLine("    summary.textContent = 'Showing ' + filteredRows.length + ' mutant(s)';")
+            .AppendLine("    pageInfo.textContent = 'Page ' + currentPage + ' of ' + totalPages;")
+            .AppendLine("    prevPage.disabled = currentPage <= 1;")
+            .AppendLine("    nextPage.disabled = currentPage >= totalPages;")
+            .AppendLine("  }")
+            .AppendLine("  function applyFilters(){")
+            .AppendLine("    const phaseValue = (phase.value || 'all').toLowerCase();")
+            .AppendLine("    const statusValue = (status.value || 'all').toLowerCase();")
+            .AppendLine("    const fileValue = (file.value || '').trim().toLowerCase();")
+            .AppendLine("    const mutatorValue = (mutator.value || '').trim().toLowerCase();")
+            .AppendLine("    filteredRows = rows.filter(row => {")
+            .AppendLine("      const rowPhase = row.dataset.phase || '';")
+            .AppendLine("      const rowStatus = row.dataset.status || '';")
+            .AppendLine("      const rowFile = row.dataset.file || '';")
+            .AppendLine("      const rowMutator = row.dataset.mutator || '';")
+            .AppendLine("      const matchesPhase = phaseValue === 'all' || rowPhase === phaseValue;")
+            .AppendLine("      const matchesStatus = statusValue === 'all' || rowStatus === statusValue;")
+            .AppendLine("      const matchesFile = !fileValue || rowFile.includes(fileValue);")
+            .AppendLine("      const matchesMutator = !mutatorValue || rowMutator.includes(mutatorValue);")
+            .AppendLine("      return matchesPhase && matchesStatus && matchesFile && matchesMutator;")
+            .AppendLine("    });")
+            .AppendLine("    currentPage = 1;")
+            .AppendLine("    renderPage();")
+            .AppendLine("  }")
+            .AppendLine("  [phase, status, file, mutator, pageSize].forEach(el => el.addEventListener('input', applyFilters));")
+            .AppendLine("  [phase, status, pageSize].forEach(el => el.addEventListener('change', applyFilters));")
+            .AppendLine("  prevPage.addEventListener('click', function(){ currentPage--; renderPage(); });")
+            .AppendLine("  nextPage.addEventListener('click', function(){ currentPage++; renderPage(); });")
+            .AppendLine("  applyFilters();")
+            .AppendLine("})();")
+            .AppendLine("</script>")
             .Append("</body></html>");
 
         var htmlPath = Path.Combine(reportsDirectory, "MutationSummary.html");
@@ -221,6 +305,13 @@ internal sealed class ReportService
         ".delta-pos{color:#22c55e}.delta-neg{color:#ef4444}" +
         ".section{background:#fff;border-radius:10px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:20px}" +
         ".section h2{margin:0 0 14px;font-size:.85em;color:#555;text-transform:uppercase;letter-spacing:.05em}" +
+        ".filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 12px;align-items:end;margin:10px 0 12px}" +
+        ".filters label{font-size:.8em;color:#555;font-weight:600}" +
+        ".filters select,.filters input{padding:6px 8px;border:1px solid #d7dce2;border-radius:6px;font-size:.85em;background:#fff;color:#222}" +
+        ".pager{display:flex;align-items:center;gap:10px;margin:-8px 0 20px}" +
+        ".pager button{padding:6px 10px;border:1px solid #d7dce2;border-radius:6px;background:#fff;color:#222;cursor:pointer}" +
+        ".pager button:disabled{opacity:.5;cursor:not-allowed}" +
+        "#mutantPageInfo{font-size:.85em;color:#555}" +
         "table{width:100%;border-collapse:collapse;font-size:.85em}" +
         "th{background:#f8f9fa;padding:8px 12px;text-align:left;color:#666;font-weight:600;border-bottom:2px solid #e9ecef}" +
         "td{padding:7px 12px;border-bottom:1px solid #f0f0f0}" +
@@ -384,5 +475,65 @@ internal sealed class ReportService
         {
             sb.AppendLine("| n/a | n/a | n/a | n/a | n/a |");
         }
+    }
+
+    private static (int Killed, int Survived, int Skipped) GetStatusCounts(IReadOnlyList<MutationDetail> mutants)
+    {
+        var killed = 0;
+        var survived = 0;
+        var skipped = 0;
+
+        foreach (var mutant in mutants)
+        {
+            var status = NormalizeMutantStatus(mutant.Status);
+            if (status.Equals("Killed", StringComparison.OrdinalIgnoreCase))
+            {
+                killed++;
+            }
+            else if (status.Equals("Survived", StringComparison.OrdinalIgnoreCase))
+            {
+                survived++;
+            }
+            else
+            {
+                skipped++;
+            }
+        }
+
+        return (killed, survived, skipped);
+    }
+
+    private static string BuildMutantHtmlRows(IReadOnlyList<MutationDetail> mutants, string phase)
+    {
+        var sb = new StringBuilder();
+        var normalizedPhase = phase.ToLowerInvariant();
+
+        foreach (var mutant in mutants
+            .OrderBy(m => m.SourceFile, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(m => m.StartLine ?? int.MaxValue)
+            .ThenBy(m => m.StartColumn ?? int.MaxValue))
+        {
+            var status = NormalizeMutantStatus(mutant.Status);
+            var file = mutant.SourceFile;
+            var lineNumber = mutant.StartLine?.ToString() ?? "n/a";
+            var mutator = string.IsNullOrWhiteSpace(mutant.MutatorName) ? "unknown" : mutant.MutatorName;
+            var location = FormatMutantLocation(mutant);
+
+            sb.Append("<tr")
+                .Append($" data-phase=\"{H(normalizedPhase)}\"")
+                .Append($" data-status=\"{H(status.ToLowerInvariant())}\"")
+                .Append($" data-file=\"{H(file.ToLowerInvariant())}\"")
+                .Append($" data-mutator=\"{H(mutator.ToLowerInvariant())}\"")
+                .Append(">")
+                .Append($"<td>{H(phase)}</td>")
+                .Append($"<td>{H(file)}</td>")
+                .Append($"<td>{H(lineNumber)}</td>")
+                .Append($"<td>{H(status)}</td>")
+                .Append($"<td>{H(mutator)}</td>")
+                .Append($"<td>{H(location)}</td>")
+                .AppendLine("</tr>");
+        }
+
+        return sb.ToString();
     }
 }

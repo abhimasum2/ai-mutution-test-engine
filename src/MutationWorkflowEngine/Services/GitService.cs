@@ -26,10 +26,31 @@ internal sealed class GitService
         return diff.StdOut
             .Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries)
             .Where(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
-            .Where(path => !path.Contains("Test", StringComparison.OrdinalIgnoreCase) && !path.Contains("Tests", StringComparison.OrdinalIgnoreCase))
+            .Where(path => !IsLikelyTestSourcePath(path))
             .Select(path => path.Replace('/', Path.DirectorySeparatorChar))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private static bool IsLikelyTestSourcePath(string relativePath)
+    {
+        var normalized = relativePath.Replace('\\', '/');
+        var fileName = Path.GetFileName(normalized);
+
+        if (fileName.EndsWith("Tests.cs", StringComparison.OrdinalIgnoreCase)
+            || fileName.EndsWith("Test.cs", StringComparison.OrdinalIgnoreCase)
+            || fileName.EndsWith("Specs.cs", StringComparison.OrdinalIgnoreCase)
+            || fileName.EndsWith("Spec.cs", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Any(segment =>
+            segment.Equals("test", StringComparison.OrdinalIgnoreCase)
+            || segment.Equals("tests", StringComparison.OrdinalIgnoreCase)
+            || segment.Equals("spec", StringComparison.OrdinalIgnoreCase)
+            || segment.Equals("specs", StringComparison.OrdinalIgnoreCase));
     }
 
     public async Task CommitAndPushAsync(

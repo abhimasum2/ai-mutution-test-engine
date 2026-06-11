@@ -23,8 +23,9 @@ internal sealed class TestIntegrationService
 
             var sourceName = Path.GetFileNameWithoutExtension(changedRelative);
             var preferredTestName = sourceName + "Tests.cs";
-            var preferredTestPath = FindExistingTestFile(testProjectDirectory, preferredTestName)
-                ?? BuildNewTestFilePath(testProjectDirectory, changedRelative, preferredTestName);
+            var preferredNewPath = BuildNewTestFilePath(testProjectDirectory, changedRelative, preferredTestName);
+            var preferredTestPath = FindExistingTestFile(testProjectDirectory, changedRelative, preferredTestName, preferredNewPath)
+                ?? preferredNewPath;
 
             var relativeTestPath = Path.GetRelativePath(repositoryRoot, preferredTestPath);
             plan.Add((sourceAbsolute, changedRelative, preferredTestPath, relativeTestPath));
@@ -98,16 +99,48 @@ internal sealed class TestIntegrationService
         return segments.Length == 0 ? string.Empty : Path.Combine(segments);
     }
 
-    private static string? FindExistingTestFile(string root, string preferredName)
+    private static string? FindExistingTestFile(
+        string root,
+        string relativeSourceFile,
+        string preferredName,
+        string preferredNewPath)
     {
-        var exact = Directory.EnumerateFiles(root, preferredName, SearchOption.AllDirectories).FirstOrDefault();
-        if (exact is not null)
+        if (File.Exists(preferredNewPath))
         {
-            return exact;
+            return preferredNewPath;
+        }
+
+        var exactMatches = Directory.EnumerateFiles(root, preferredName, SearchOption.AllDirectories).ToList();
+        if (exactMatches.Count == 1)
+        {
+            return exactMatches[0];
+        }
+
+        if (exactMatches.Count > 1)
+        {
+            var sourceRelativeDirectory = Path.GetDirectoryName(relativeSourceFile) ?? string.Empty;
+            var normalizedSourceDir = sourceRelativeDirectory
+                .Replace('\\', '/')
+                .Trim('/');
+
+            if (normalizedSourceDir.StartsWith("src/", StringComparison.OrdinalIgnoreCase))
+            {
+                normalizedSourceDir = normalizedSourceDir[4..];
+            }
+
+            var scopedExact = exactMatches.FirstOrDefault(path =>
+                path.Replace('\\', '/').Contains("/" + normalizedSourceDir + "/", StringComparison.OrdinalIgnoreCase));
+
+            if (scopedExact is not null)
+            {
+                return scopedExact;
+            }
         }
 
         var fuzzy = Directory.EnumerateFiles(root, "*Tests.cs", SearchOption.AllDirectories)
-            .FirstOrDefault(path => Path.GetFileName(path).StartsWith(preferredName.Replace("Tests.cs", string.Empty), StringComparison.OrdinalIgnoreCase));
+            .Where(path => Path.GetFileName(path).StartsWith(preferredName.Replace("Tests.cs", string.Empty), StringComparison.OrdinalIgnoreCase))
+            .Where(path => !Path.GetFileName(path).Equals(preferredName, StringComparison.OrdinalIgnoreCase))
+            .FirstOrDefault();
 
         return fuzzy;
     }
