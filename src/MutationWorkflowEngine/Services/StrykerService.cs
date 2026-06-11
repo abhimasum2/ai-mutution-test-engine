@@ -47,8 +47,6 @@ internal sealed class StrykerService
         await File.WriteAllTextAsync(strykerConfigPath, configJson, cancellationToken);
         try
         {
-
-
             // --output is a CLI-only flag; not allowed inside the config file.
             var result = await _runner.RunAsync(
                 "dotnet",
@@ -57,16 +55,15 @@ internal sealed class StrykerService
                 timeout,
                 cancellationToken);
 
-			if (!result.IsSuccess)
-			{
-				throw new InvalidOperationException($"Stryker run failed ({runName}). {result.StdErr}\n{result.StdOut}");
-			}
-		}
-        catch (Exception ex)
-		{
-
-			throw ex;
-		}
+            if (!result.IsSuccess)
+            {
+                throw new InvalidOperationException($"Stryker run failed ({runName}). {result.StdErr}\n{result.StdOut}");
+            }
+        }
+        catch
+        {
+            throw;
+        }
 
 		
 
