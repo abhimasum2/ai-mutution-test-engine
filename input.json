@@ -4,7 +4,7 @@
   "TestProjectPath": "tests/InvestmentCalculator.Tests/InvestmentCalculator.Tests.csproj",
   "ReportsDirectory": "mutation-reports/local-run",
   "BaseRef": "HEAD~1",
-  "OpenAiModel": "gpt-4o",
+  "OpenAiModel": "gpt-4o-mini",
   "OpenAiApiKey": "",
   "CommitAndPush": false,
   "GenerationMaxIterations": 1,

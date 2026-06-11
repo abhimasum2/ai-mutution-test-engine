@@ -46,8 +46,6 @@ internal sealed class StrykerService
         await File.WriteAllTextAsync(strykerConfigPath, configJson, cancellationToken);
         try
         {
-
-
             // --output is a CLI-only flag; not allowed inside the config file.
             var result = await _runner.RunAsync(
                 "dotnet",
@@ -56,16 +54,15 @@ internal sealed class StrykerService
                 timeout,
                 cancellationToken);
 
-			if (!result.IsSuccess)
-			{
-				throw new InvalidOperationException($"Stryker run failed ({runName}). {result.StdErr}\n{result.StdOut}");
-			}
-		}
-        catch (Exception ex)
-		{
-
-			throw ex;
-		}
+            if (!result.IsSuccess)
+            {
+                throw new InvalidOperationException($"Stryker run failed ({runName}). {result.StdErr}\n{result.StdOut}");
+            }
+        }
+        catch
+        {
+            throw;
+        }
 
 		
 
@@ -154,9 +151,25 @@ internal sealed class StrykerService
             : null;
 
     private static int? TryGetInt(JsonElement element, string propertyName)
-        => element.TryGetProperty(propertyName, out var value) && value.TryGetInt32(out var number)
-            ? number
-            : null;
+    {
+        if (!element.TryGetProperty(propertyName, out var value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
+        {
+            return number;
+        }
+
+        if (value.ValueKind == JsonValueKind.String
+            && int.TryParse(value.GetString(), out var parsedFromString))
+        {
+            return parsedFromString;
+        }
+
+        return null;
+    }
 
     private static (int? StartLine, int? StartColumn, int? EndLine, int? EndColumn) ParseLocation(JsonElement mutant)
     {
