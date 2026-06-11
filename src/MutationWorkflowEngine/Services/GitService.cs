@@ -44,6 +44,8 @@ internal sealed class GitService
             return;
         }
 
+        await EnsureCommitIdentityAsync(repositoryRoot, cancellationToken, timeout);
+
         foreach (var file in filesToCommit)
         {
             var add = await _runner.RunAsync("git", $"add -- \"{file}\"", repositoryRoot, timeout, cancellationToken);
@@ -70,5 +72,58 @@ internal sealed class GitService
         {
             throw new InvalidOperationException($"git push failed. {push.StdErr}");
         }
+    }
+
+    private async Task EnsureCommitIdentityAsync(
+        string repositoryRoot,
+        CancellationToken cancellationToken,
+        TimeSpan timeout)
+    {
+        var configuredName = await GetGitConfigAsync(repositoryRoot, "user.name", cancellationToken, timeout);
+        var configuredEmail = await GetGitConfigAsync(repositoryRoot, "user.email", cancellationToken, timeout);
+
+        if (!string.IsNullOrWhiteSpace(configuredName) && !string.IsNullOrWhiteSpace(configuredEmail))
+        {
+            return;
+        }
+
+        var actor = Environment.GetEnvironmentVariable("GITHUB_ACTOR");
+        var fallbackName = string.IsNullOrWhiteSpace(actor) ? "github-actions[bot]" : actor;
+        var fallbackEmail = string.IsNullOrWhiteSpace(actor)
+            ? "41898282+github-actions[bot]@users.noreply.github.com"
+            : $"{actor}@users.noreply.github.com";
+
+        if (string.IsNullOrWhiteSpace(configuredName))
+        {
+            var setName = await _runner.RunAsync("git", $"config user.name \"{fallbackName}\"", repositoryRoot, timeout, cancellationToken);
+            if (!setName.IsSuccess)
+            {
+                throw new InvalidOperationException($"git config user.name failed. {setName.StdErr}");
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(configuredEmail))
+        {
+            var setEmail = await _runner.RunAsync("git", $"config user.email \"{fallbackEmail}\"", repositoryRoot, timeout, cancellationToken);
+            if (!setEmail.IsSuccess)
+            {
+                throw new InvalidOperationException($"git config user.email failed. {setEmail.StdErr}");
+            }
+        }
+    }
+
+    private async Task<string?> GetGitConfigAsync(
+        string repositoryRoot,
+        string key,
+        CancellationToken cancellationToken,
+        TimeSpan timeout)
+    {
+        var result = await _runner.RunAsync("git", $"config --get {key}", repositoryRoot, timeout, cancellationToken);
+        if (!result.IsSuccess)
+        {
+            return null;
+        }
+
+        return string.IsNullOrWhiteSpace(result.StdOut) ? null : result.StdOut.Trim();
     }
 }
