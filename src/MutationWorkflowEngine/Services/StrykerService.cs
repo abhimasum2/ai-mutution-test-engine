@@ -85,6 +85,7 @@ internal sealed class StrykerService
 
         var root = doc.RootElement;
         var files = new List<MutationFileResult>();
+        var mutantsList = new List<MutationDetail>();
         var totalKilled = 0;
         var totalSurvived = 0;
         var totalMutants = 0;
@@ -120,6 +121,19 @@ internal sealed class StrykerService
                     {
                         survived++;
                     }
+
+                    var mutantId = TryGetInt(mutant, "id");
+                    var mutatorName = TryGetString(mutant, "mutatorName");
+                    var (startLine, startColumn, endLine, endColumn) = ParseLocation(mutant);
+                    mutantsList.Add(new MutationDetail(
+                        filePath,
+                        mutantId,
+                        status,
+                        mutatorName,
+                        startLine,
+                        startColumn,
+                        endLine,
+                        endColumn));
                 }
 
                 var score = total == 0 ? 0 : (double)killed / total * 100;
@@ -131,7 +145,43 @@ internal sealed class StrykerService
         }
 
         var overallScore = totalMutants == 0 ? 0 : (double)totalKilled / totalMutants * 100;
-        return new MutationReportSummary(reportPath, totalKilled, totalSurvived, totalMutants, overallScore, files);
+        return new MutationReportSummary(reportPath, totalKilled, totalSurvived, totalMutants, overallScore, files, mutantsList);
+    }
+
+    private static string? TryGetString(JsonElement element, string propertyName)
+        => element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+
+    private static int? TryGetInt(JsonElement element, string propertyName)
+        => element.TryGetProperty(propertyName, out var value) && value.TryGetInt32(out var number)
+            ? number
+            : null;
+
+    private static (int? StartLine, int? StartColumn, int? EndLine, int? EndColumn) ParseLocation(JsonElement mutant)
+    {
+        if (!mutant.TryGetProperty("location", out var location) || location.ValueKind != JsonValueKind.Object)
+        {
+            return (null, null, null, null);
+        }
+
+        var startLine = TryGetNestedInt(location, "start", "line");
+        var startColumn = TryGetNestedInt(location, "start", "column");
+        var endLine = TryGetNestedInt(location, "end", "line");
+        var endColumn = TryGetNestedInt(location, "end", "column");
+        return (startLine, startColumn, endLine, endColumn);
+    }
+
+    private static int? TryGetNestedInt(JsonElement root, string parentProperty, string childProperty)
+    {
+        if (!root.TryGetProperty(parentProperty, out var parent) || parent.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        return parent.TryGetProperty(childProperty, out var child) && child.TryGetInt32(out var value)
+            ? value
+            : null;
     }
 
     private static string ToGlobPattern(string relativeFile)

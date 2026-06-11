@@ -57,13 +57,24 @@ internal sealed record MutationFileResult(
     int Total,
     double Score);
 
+internal sealed record MutationDetail(
+    string SourceFile,
+    int? MutantId,
+    string Status,
+    string? MutatorName,
+    int? StartLine,
+    int? StartColumn,
+    int? EndLine,
+    int? EndColumn);
+
 internal sealed record MutationReportSummary(
     string ReportPath,
     int TotalKilled,
     int TotalSurvived,
     int TotalMutants,
     double Score,
-    IReadOnlyList<MutationFileResult> Files);
+    IReadOnlyList<MutationFileResult> Files,
+    IReadOnlyList<MutationDetail> Mutants);
 
 internal sealed record GeneratedTestPatch(
     string RelativeTestFilePath,

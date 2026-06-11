@@ -242,6 +242,8 @@ internal sealed class ReportService
         var preMap = pre.Files.ToDictionary(f => f.SourceFile, StringComparer.OrdinalIgnoreCase);
         var postMap = post.Files.ToDictionary(f => f.SourceFile, StringComparer.OrdinalIgnoreCase);
         var allFiles = preMap.Keys.Union(postMap.Keys, StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
+        var preMutants = BuildTrackedMutantRows(pre.Mutants);
+        var postMutants = BuildTrackedMutantRows(post.Mutants);
 
         var rows = new List<object>();
         foreach (var file in allFiles)
@@ -267,7 +269,9 @@ internal sealed class ReportService
             pre = new { pre.ReportPath, pre.TotalKilled, pre.TotalSurvived, pre.TotalMutants, pre.Score },
             post = new { post.ReportPath, post.TotalKilled, post.TotalSurvived, post.TotalMutants, post.Score },
             overallDeltaScore = post.Score - pre.Score,
-            files = rows
+            files = rows,
+            preMutants,
+            postMutants
         };
     }
 
@@ -304,6 +308,54 @@ internal sealed class ReportService
                          $"{row.GetProperty("deltaSurvived").GetInt32():+0;-0;0} |");
         }
 
+        AppendMutantsMarkdownSection(sb, "Pre-commit Mutants", root.GetProperty("preMutants"));
+        AppendMutantsMarkdownSection(sb, "Post-commit Mutants", root.GetProperty("postMutants"));
+
         return sb.ToString();
+    }
+
+    private static List<object> BuildTrackedMutantRows(IReadOnlyList<MutationDetail> mutants)
+        => mutants
+            .Where(m => m.Status.Equals("Killed", StringComparison.OrdinalIgnoreCase)
+                || m.Status.Equals("Survived", StringComparison.OrdinalIgnoreCase))
+            .Select(m => (object)new
+            {
+                sourceFile = m.SourceFile,
+                mutantId = m.MutantId,
+                status = m.Status,
+                mutatorName = string.IsNullOrWhiteSpace(m.MutatorName) ? "unknown" : m.MutatorName,
+                location = FormatMutantLocation(m)
+            })
+            .ToList();
+
+    private static string FormatMutantLocation(MutationDetail mutant)
+        => mutant.StartLine.HasValue
+            ? $"{mutant.StartLine}:{mutant.StartColumn ?? 0}-{mutant.EndLine ?? mutant.StartLine}:{mutant.EndColumn ?? 0}"
+            : "n/a";
+
+    private static void AppendMutantsMarkdownSection(StringBuilder sb, string sectionTitle, JsonElement mutants)
+    {
+        sb.AppendLine();
+        sb.AppendLine($"## {sectionTitle}");
+        sb.AppendLine();
+        sb.AppendLine("| File | Mutant Id | Status | Mutator | Location |");
+        sb.AppendLine("|---|---:|---|---|---|");
+
+        foreach (var mutant in mutants.EnumerateArray())
+        {
+            var file = mutant.GetProperty("sourceFile").GetString() ?? string.Empty;
+            var id = mutant.GetProperty("mutantId").ValueKind == JsonValueKind.Null
+                ? "n/a"
+                : mutant.GetProperty("mutantId").GetInt32().ToString();
+            var status = mutant.GetProperty("status").GetString() ?? string.Empty;
+            var mutatorName = mutant.GetProperty("mutatorName").GetString() ?? "unknown";
+            var location = mutant.GetProperty("location").GetString() ?? "n/a";
+            sb.AppendLine($"| {file} | {id} | {status} | {mutatorName} | {location} |");
+        }
+
+        if (!mutants.EnumerateArray().Any())
+        {
+            sb.AppendLine("| n/a | n/a | n/a | n/a | n/a |");
+        }
     }
 }

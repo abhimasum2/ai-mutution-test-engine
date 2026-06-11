@@ -58,6 +58,7 @@ internal sealed class WorkflowOrchestrator(
 
         var preSummary = await stryker.ParseReportAsync(preReportPath, cancellationToken);
         Log(config, $"Pre-commit score: {preSummary.Score:F2}%");
+        LogMutants(config, "Pre-commit", preSummary);
 
         var generationPlan = integration.BuildGenerationPlan(config.RepositoryRoot, testProjectPath, changedFiles);
         if (generationPlan.Count == 0)
@@ -137,6 +138,7 @@ internal sealed class WorkflowOrchestrator(
 
         var postSummary = await stryker.ParseReportAsync(postReportPath, cancellationToken);
         Log(config, $"Post-commit score: {postSummary.Score:F2}%");
+        LogMutants(config, "Post-commit", postSummary);
 
         Log(config, "Creating unified report...");
         var (jsonPath, markdownPath) = await reports.WriteUnifiedReportAsync(config.ReportsDirectory, preSummary, postSummary, cancellationToken);
@@ -170,6 +172,32 @@ internal sealed class WorkflowOrchestrator(
         if (config.Verbose)
         {
             Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
+        }
+    }
+
+    private static void LogMutants(AppConfig config, string phase, MutationReportSummary summary)
+    {
+        var tracked = summary.Mutants
+            .Where(m => m.Status.Equals("Killed", StringComparison.OrdinalIgnoreCase)
+                || m.Status.Equals("Survived", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        Log(config, $"{phase} mutants identified: {tracked.Count}");
+
+        foreach (var file in summary.Files.OrderBy(f => f.SourceFile, StringComparer.OrdinalIgnoreCase))
+        {
+            Log(config, $"{phase} file: {file.SourceFile} | killed={file.Killed}, survived={file.Survived}, total={file.Total}");
+        }
+
+        foreach (var mutant in tracked)
+        {
+            var idText = mutant.MutantId.HasValue ? mutant.MutantId.Value.ToString() : "n/a";
+            var mutatorText = string.IsNullOrWhiteSpace(mutant.MutatorName) ? "unknown" : mutant.MutatorName;
+            var locationText = mutant.StartLine.HasValue
+                ? $"{mutant.StartLine}:{mutant.StartColumn ?? 0}-{mutant.EndLine ?? mutant.StartLine}:{mutant.EndColumn ?? 0}"
+                : "n/a";
+
+            Log(config, $"{phase} mutant id={idText} status={mutant.Status} file={mutant.SourceFile} mutator={mutatorText} location={locationText}");
         }
     }
 }
