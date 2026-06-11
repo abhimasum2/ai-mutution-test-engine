@@ -159,6 +159,7 @@ Rules:
 - Include focused assertions and edge cases.
 - Output complete file content, not a diff.
 - No markdown fences.
+- If existing tests are empty, create a brand new complete test file for this source file.
 
 Source file: {sourceFile}
 Mutation hints: {mutationHints}

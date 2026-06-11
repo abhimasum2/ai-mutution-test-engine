@@ -242,8 +242,8 @@ internal sealed class ReportService
         var preMap = pre.Files.ToDictionary(f => f.SourceFile, StringComparer.OrdinalIgnoreCase);
         var postMap = post.Files.ToDictionary(f => f.SourceFile, StringComparer.OrdinalIgnoreCase);
         var allFiles = preMap.Keys.Union(postMap.Keys, StringComparer.OrdinalIgnoreCase).OrderBy(x => x).ToList();
-        var preMutants = BuildTrackedMutantRows(pre.Mutants);
-        var postMutants = BuildTrackedMutantRows(post.Mutants);
+        var preMutants = BuildUnifiedMutantRows(pre.Mutants);
+        var postMutants = BuildUnifiedMutantRows(post.Mutants);
 
         var rows = new List<object>();
         foreach (var file in allFiles)
@@ -314,19 +314,36 @@ internal sealed class ReportService
         return sb.ToString();
     }
 
-    private static List<object> BuildTrackedMutantRows(IReadOnlyList<MutationDetail> mutants)
+    private static List<object> BuildUnifiedMutantRows(IReadOnlyList<MutationDetail> mutants)
         => mutants
-            .Where(m => m.Status.Equals("Killed", StringComparison.OrdinalIgnoreCase)
-                || m.Status.Equals("Survived", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(m => m.SourceFile, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(m => m.StartLine ?? int.MaxValue)
+            .ThenBy(m => m.StartColumn ?? int.MaxValue)
             .Select(m => (object)new
             {
                 sourceFile = m.SourceFile,
                 mutantId = m.MutantId,
-                status = m.Status,
+                status = NormalizeMutantStatus(m.Status),
                 mutatorName = string.IsNullOrWhiteSpace(m.MutatorName) ? "unknown" : m.MutatorName,
                 location = FormatMutantLocation(m)
             })
             .ToList();
+
+    private static string NormalizeMutantStatus(string? rawStatus)
+    {
+        var status = rawStatus ?? string.Empty;
+        if (status.Equals("Killed", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Killed";
+        }
+
+        if (status.Equals("Survived", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Survived";
+        }
+
+        return "Skipped";
+    }
 
     private static string FormatMutantLocation(MutationDetail mutant)
         => mutant.StartLine.HasValue
@@ -335,13 +352,23 @@ internal sealed class ReportService
 
     private static void AppendMutantsMarkdownSection(StringBuilder sb, string sectionTitle, JsonElement mutants)
     {
+        var allMutants = mutants.EnumerateArray().ToList();
+        var killedCount = allMutants.Count(m => (m.GetProperty("status").GetString() ?? string.Empty).Equals("Killed", StringComparison.OrdinalIgnoreCase));
+        var survivedCount = allMutants.Count(m => (m.GetProperty("status").GetString() ?? string.Empty).Equals("Survived", StringComparison.OrdinalIgnoreCase));
+        var skippedCount = allMutants.Count(m => (m.GetProperty("status").GetString() ?? string.Empty).Equals("Skipped", StringComparison.OrdinalIgnoreCase));
+
         sb.AppendLine();
         sb.AppendLine($"## {sectionTitle}");
+        sb.AppendLine();
+        sb.AppendLine($"- Total mutants: {allMutants.Count}");
+        sb.AppendLine($"- Killed: {killedCount}");
+        sb.AppendLine($"- Survived: {survivedCount}");
+        sb.AppendLine($"- Skipped: {skippedCount}");
         sb.AppendLine();
         sb.AppendLine("| File | Mutant Id | Status | Mutator | Location |");
         sb.AppendLine("|---|---:|---|---|---|");
 
-        foreach (var mutant in mutants.EnumerateArray())
+        foreach (var mutant in allMutants)
         {
             var file = mutant.GetProperty("sourceFile").GetString() ?? string.Empty;
             var id = mutant.GetProperty("mutantId").ValueKind == JsonValueKind.Null
@@ -353,7 +380,7 @@ internal sealed class ReportService
             sb.AppendLine($"| {file} | {id} | {status} | {mutatorName} | {location} |");
         }
 
-        if (!mutants.EnumerateArray().Any())
+        if (allMutants.Count == 0)
         {
             sb.AppendLine("| n/a | n/a | n/a | n/a | n/a |");
         }
