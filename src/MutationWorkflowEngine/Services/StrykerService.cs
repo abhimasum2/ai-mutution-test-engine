@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using MutationWorkflowEngine.Models;
 
@@ -154,9 +155,7 @@ internal sealed class StrykerService
             : null;
 
     private static int? TryGetInt(JsonElement element, string propertyName)
-        => element.TryGetProperty(propertyName, out var value) && value.TryGetInt32(out var number)
-            ? number
-            : null;
+        => element.TryGetProperty(propertyName, out var value) ? TryGetInt32(value) : null;
 
     private static (int? StartLine, int? StartColumn, int? EndLine, int? EndColumn) ParseLocation(JsonElement mutant)
     {
@@ -179,9 +178,22 @@ internal sealed class StrykerService
             return null;
         }
 
-        return parent.TryGetProperty(childProperty, out var child) && child.TryGetInt32(out var value)
-            ? value
-            : null;
+        return parent.TryGetProperty(childProperty, out var child) ? TryGetInt32(child) : null;
+    }
+
+    private static int? TryGetInt32(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var number))
+        {
+            return number;
+        }
+
+        if (element.ValueKind == JsonValueKind.String && int.TryParse(element.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return parsed;
+        }
+
+        return null;
     }
 
     private static string ToGlobPattern(string relativeFile)
