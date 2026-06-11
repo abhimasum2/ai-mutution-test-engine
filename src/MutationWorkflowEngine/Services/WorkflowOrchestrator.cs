@@ -20,6 +20,8 @@ internal sealed class WorkflowOrchestrator(
 
         var timeout = TimeSpan.FromMinutes(config.ProcessTimeoutMinutes);
         Directory.CreateDirectory(config.ReportsDirectory);
+        var detailsReportsDir = Path.Combine(config.ReportsDirectory, "Reports");
+        Directory.CreateDirectory(detailsReportsDir);
 
         Log(config, "Resolving test project and framework...");
         var (testProjectPath, framework) = await discovery.ResolveTestProjectAndFrameworkAsync(
@@ -39,8 +41,8 @@ internal sealed class WorkflowOrchestrator(
 
         Log(config, $"Changed source files: {changedFiles.Count}");
 
-        var preDir = Path.Combine(config.ReportsDirectory, "pre-commit");
-        var postDir = Path.Combine(config.ReportsDirectory, "post-commit");
+        var preDir = Path.Combine(detailsReportsDir, "pre-build");
+        var postDir = Path.Combine(detailsReportsDir, "post-build");
 
         Log(config, "Running pre-commit mutation testing...");
         var preStageTimer = Stopwatch.StartNew();
@@ -141,7 +143,7 @@ internal sealed class WorkflowOrchestrator(
         LogMutants(config, "Post-commit", postSummary);
 
         Log(config, "Creating unified report...");
-        var (jsonPath, markdownPath) = await reports.WriteUnifiedReportAsync(config.ReportsDirectory, preSummary, postSummary, cancellationToken);
+        var (jsonPath, markdownPath) = await reports.WriteUnifiedReportAsync(detailsReportsDir, preSummary, postSummary, cancellationToken);
 
         Log(config, $"Unified report JSON: {jsonPath}");
         Log(config, $"Unified report Markdown: {markdownPath}");
@@ -152,13 +154,13 @@ internal sealed class WorkflowOrchestrator(
             allTokenUsageRecords.Sum(r => r.OutputTokens),
             allTokenUsageRecords.Sum(r => r.TotalTokens),
             allTokenUsageRecords);
-        var tokenReportPath = await reports.WriteTokenUsageReportAsync(config.ReportsDirectory, finalTokenReport, cancellationToken);
+        var tokenReportPath = await reports.WriteTokenUsageReportAsync(Path.Combine(detailsReportsDir, "token-usage"), finalTokenReport, cancellationToken);
         Log(config, $"Token usage report: {tokenReportPath}");
         Log(config, $"Total tokens consumed — input: {finalTokenReport.TotalInputTokens}, output: {finalTokenReport.TotalOutputTokens}, total: {finalTokenReport.TotalTokens}");
 
         totalTimer.Stop();
         var performanceReport = new PerformanceReport(startedAtUtc, DateTime.UtcNow, totalTimer.Elapsed, stageTimings);
-        var perfReportPath = await reports.WritePerformanceReportAsync(config.ReportsDirectory, performanceReport, cancellationToken);
+        var perfReportPath = await reports.WritePerformanceReportAsync(Path.Combine(detailsReportsDir, "performance"), performanceReport, cancellationToken);
         Log(config, $"Performance report: {perfReportPath}");
         Log(config, $"Total engine runtime: {totalTimer.Elapsed:hh\\:mm\\:ss}");
 

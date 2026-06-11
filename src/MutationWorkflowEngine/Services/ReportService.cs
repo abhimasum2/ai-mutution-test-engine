@@ -197,7 +197,7 @@ internal sealed class ReportService
             .AppendLine("</table></div>")
             .Append("</body></html>");
 
-        var htmlPath = Path.Combine(reportsDirectory, "summary-report.html");
+        var htmlPath = Path.Combine(reportsDirectory, "MutationSummary.html");
         await File.WriteAllTextAsync(htmlPath, html.ToString(), cancellationToken);
         return htmlPath;
     }
