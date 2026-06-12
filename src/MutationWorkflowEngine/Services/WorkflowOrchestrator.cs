@@ -62,80 +62,90 @@ internal sealed class WorkflowOrchestrator(
         Log(config, $"Pre-commit score: {preSummary.Score:F2}%");
         LogMutants(config, "Pre-commit", preSummary);
 
-        var generationPlan = integration.BuildGenerationPlan(config.RepositoryRoot, testProjectPath, changedFiles);
-        if (generationPlan.Count == 0)
-        {
-            throw new InvalidOperationException("No generation plan entries were created for changed files.");
-        }
-
         IReadOnlyList<string> updatedTests = Array.Empty<string>();
         ProcessResult? lastBuildResult = null;
         ProcessResult? lastTestResult = null;
         var allTokenUsageRecords = new List<TokenUsageRecord>();
 
-        var aiStageTimer = Stopwatch.StartNew();
-        for (var attempt = 1; attempt <= config.GenerationMaxIterations; attempt++)
+        var survivedMutantsCount = preSummary.Mutants.Count(m => m.Status.Equals("Survived", StringComparison.OrdinalIgnoreCase));
+        if (survivedMutantsCount > 0)
         {
-            Log(config, $"Generating test updates from mutation report with AI (attempt {attempt}/{config.GenerationMaxIterations})...");
-            var (patches, tokenUsage) = await ai.GenerateTestsAsync(config, framework, preSummary, generationPlan, cancellationToken);
-            allTokenUsageRecords.AddRange(tokenUsage.Records);
-            Log(config, $"Tokens used this attempt — input: {tokenUsage.TotalInputTokens}, output: {tokenUsage.TotalOutputTokens}");
-            updatedTests = await integration.ApplyGeneratedPatchesAsync(config.RepositoryRoot, patches, cancellationToken);
-            Log(config, $"Updated/created test files: {updatedTests.Count}");
-
-            Log(config, "Validating test project build...");
-            lastBuildResult = await processRunner.RunAsync(
-                "dotnet",
-                $"build \"{testProjectPath}\" --nologo",
-                config.RepositoryRoot,
-                timeout,
-                cancellationToken);
-
-            if (lastBuildResult.IsSuccess)
+            var generationPlan = integration.BuildGenerationPlan(config.RepositoryRoot, testProjectPath, changedFiles);
+            if (generationPlan.Count == 0)
             {
-                Log(config, "Test project build passed.");
+                throw new InvalidOperationException("No generation plan entries were created for changed files.");
+            }
 
-                Log(config, "Running test suite to validate generated tests...");
-                lastTestResult = await processRunner.RunAsync(
+            var aiStageTimer = Stopwatch.StartNew();
+            for (var attempt = 1; attempt <= config.GenerationMaxIterations; attempt++)
+            {
+                Log(config, $"Generating test updates from mutation report with AI (attempt {attempt}/{config.GenerationMaxIterations})...");
+                var (patches, tokenUsage) = await ai.GenerateTestsAsync(config, framework, preSummary, generationPlan, cancellationToken);
+                allTokenUsageRecords.AddRange(tokenUsage.Records);
+                Log(config, $"Tokens used this attempt — input: {tokenUsage.TotalInputTokens}, output: {tokenUsage.TotalOutputTokens}");
+                updatedTests = await integration.ApplyGeneratedPatchesAsync(config.RepositoryRoot, patches, cancellationToken);
+                Log(config, $"Updated/created test files: {updatedTests.Count}");
+
+                Log(config, "Validating test project build...");
+                lastBuildResult = await processRunner.RunAsync(
                     "dotnet",
-                    $"test \"{testProjectPath}\" --no-build --nologo",
+                    $"build \"{testProjectPath}\" --nologo",
                     config.RepositoryRoot,
                     timeout,
                     cancellationToken);
 
-                if (lastTestResult.IsSuccess)
+                if (lastBuildResult.IsSuccess)
                 {
-                    Log(config, "All tests passed.");
-                    break;
+                    Log(config, "Test project build passed.");
+
+                    Log(config, "Running test suite to validate generated tests...");
+                    lastTestResult = await processRunner.RunAsync(
+                        "dotnet",
+                        $"test \"{testProjectPath}\" --no-build --nologo",
+                        config.RepositoryRoot,
+                        timeout,
+                        cancellationToken);
+
+                    if (lastTestResult.IsSuccess)
+                    {
+                        Log(config, "All tests passed.");
+                        break;
+                    }
+
+                    Log(config, $"Test execution failed on attempt {attempt}. Regenerating tests...");
+                    if (attempt == config.GenerationMaxIterations)
+                    {
+                        var testDetails = string.IsNullOrWhiteSpace(lastTestResult.StdErr)
+                            ? lastTestResult.StdOut
+                            : lastTestResult.StdErr;
+
+                        throw new InvalidOperationException(
+                            "Generated tests did not pass after all attempts. Last test output:\n" + testDetails);
+                    }
+
+                    continue;
                 }
 
-                Log(config, $"Test execution failed on attempt {attempt}. Regenerating tests...");
+                Log(config, $"Test project build failed on attempt {attempt}. Regenerating tests...");
                 if (attempt == config.GenerationMaxIterations)
                 {
-                    var testDetails = string.IsNullOrWhiteSpace(lastTestResult.StdErr)
-                        ? lastTestResult.StdOut
-                        : lastTestResult.StdErr;
+                    var buildDetails = string.IsNullOrWhiteSpace(lastBuildResult.StdErr)
+                        ? lastBuildResult.StdOut
+                        : lastBuildResult.StdErr;
 
                     throw new InvalidOperationException(
-                        "Generated tests did not pass after all attempts. Last test output:\n" + testDetails);
+                        "Generated tests did not build after all attempts. Last build output:\n" + buildDetails);
                 }
-
-                continue;
             }
 
-            Log(config, $"Test project build failed on attempt {attempt}. Regenerating tests...");
-            if (attempt == config.GenerationMaxIterations)
-            {
-                var buildDetails = string.IsNullOrWhiteSpace(lastBuildResult.StdErr)
-                    ? lastBuildResult.StdOut
-                    : lastBuildResult.StdErr;
-
-                throw new InvalidOperationException(
-                    "Generated tests did not build after all attempts. Last build output:\n" + buildDetails);
-            }
+            aiStageTimer.Stop();
+            stageTimings.Add(new PerformanceStageTiming("AI Test Generation", aiStageTimer.Elapsed));
         }
-        aiStageTimer.Stop();
-        stageTimings.Add(new PerformanceStageTiming("AI Test Generation", aiStageTimer.Elapsed));
+        else
+        {
+            Log(config, "No survived mutants detected in pre-commit report. Skipping AI test generation.");
+            stageTimings.Add(new PerformanceStageTiming("AI Test Generation", TimeSpan.Zero));
+        }
 
         if (config.CommitAndPush)
         {
