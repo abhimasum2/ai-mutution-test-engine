@@ -202,20 +202,93 @@ internal sealed class ReportService
             .Append(stageRows)
             .AppendLine("</table></div>")
             .AppendLine("<div class=\"section\"><h2>Unified Mutation Report Mutants</h2>")
-            .AppendLine($"<p><strong>Pre-commit</strong>: Total={pre.Mutants.Count}, Killed={preCounts.Killed}, Survived={preCounts.Survived}, Skipped={preCounts.Skipped}</p>")
-            .AppendLine($"<p><strong>Post-commit</strong>: Total={post.Mutants.Count}, Killed={postCounts.Killed}, Survived={postCounts.Survived}, Skipped={postCounts.Skipped}</p>")
+            .AppendLine("<div class=\"w-100\"><div class=\"w-50\">")
+            .AppendLine("<div class=\"summary-section\">")
+            .AppendLine("<div class=\"section-title\">Pre-commit</div>")
+            .AppendLine("<div class=\"card-grid\">")
+            .AppendLine($"<div class=\"metric-card total\"><h4>Total</h4><p>{pre.Mutants.Count}</p></div>")
+            .AppendLine($"<div class=\"metric-card killed\"><h4>Killed</h4><p>{preCounts.Killed}</p></div>")
+            .AppendLine($"<div class=\"metric-card survived\"><h4>Survived</h4><p>{preCounts.Survived}</p></div>")
+            .AppendLine($"<div class=\"metric-card skipped\"><h4>Skipped</h4><p>{preCounts.Skipped}</p></div>")
+            .AppendLine($"<div class=\"metric-card score\"><h4>Score</h4><p>{pre.Score:F1}%</p></div>")
+            .AppendLine("</div>")
+            .AppendLine("</div>")
+            .AppendLine("<div class=\"summary-section\">")
+            .AppendLine("<div class=\"section-title\">Post-commit</div>")
+            .AppendLine("<div class=\"card-grid\">")
+            .AppendLine($"<div class=\"metric-card total\"><h4>Total</h4><p>{post.Mutants.Count}</p></div>")
+            .AppendLine($"<div class=\"metric-card killed\"><h4>Killed</h4><p>{postCounts.Killed}</p></div>")
+            .AppendLine($"<div class=\"metric-card survived\"><h4>Survived</h4><p>{postCounts.Survived}</p></div>")
+            .AppendLine($"<div class=\"metric-card skipped\"><h4>Skipped</h4><p>{postCounts.Skipped}</p></div>")
+            .AppendLine($"<div class=\"metric-card score\"><h4>Score</h4><p>{post.Score:F1}%</p></div>")
+            .AppendLine("</div>")
+            .AppendLine("</div>")
+            .AppendLine("</div>")
+            .AppendLine("<div class=\"w-50\">")
+            .AppendLine("<script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>")
+            .AppendLine("<div class=\"chart-container\">")
+            .AppendLine("<canvas id=\"mutationSummaryChart\"></canvas>")
+            .AppendLine("</div>")
+
+            .AppendLine("<script>")
+            .AppendLine("const ctx = document.getElementById('mutationSummaryChart').getContext('2d');")
+            .AppendLine("new Chart(ctx, {")
+            .AppendLine("  type: 'bar',")
+            .AppendLine("  data: {")
+            .AppendLine("    labels: ['Total', 'Killed', 'Survived', 'Skipped', 'Score'],")
+            .AppendLine("    datasets: [")
+            .AppendLine("      {")
+            .AppendLine("        label: 'Pre-commit',")
+            .AppendLine($"        data: [{pre.Mutants.Count}, {preCounts.Killed}, {preCounts.Survived}, {preCounts.Skipped}, {pre.Score:F1}],")
+            .AppendLine("        backgroundColor: 'rgba(0, 120, 212, 0.7)',")
+            .AppendLine("        borderColor: 'rgba(0, 120, 212, 1)',")
+            .AppendLine("        borderWidth: 1")
+            .AppendLine("      },")
+            .AppendLine("      {")
+            .AppendLine("        label: 'Post-commit',")
+            .AppendLine($"        data: [{post.Mutants.Count}, {postCounts.Killed}, {postCounts.Survived}, {postCounts.Skipped}, {post.Score:F1}],")
+            .AppendLine("        backgroundColor: 'rgba(40, 167, 69, 0.7)',")
+            .AppendLine("        borderColor: 'rgba(40, 167, 69, 1)',")
+            .AppendLine("        borderWidth: 1")
+            .AppendLine("      }")
+            .AppendLine("    ]")
+            .AppendLine("  },")
+            .AppendLine("  options: {")
+            .AppendLine("    responsive: true,")
+            .AppendLine("    plugins: {")
+            .AppendLine("      legend: { position: 'top' },")
+            .AppendLine("      title: { display: true, text: 'Mutation Summary Comparison' }")
+            .AppendLine("    },")
+            .AppendLine("    scales: {")
+            .AppendLine("      y: { beginAtZero: true, ticks: { precision: 0 } }")
+            .AppendLine("    }")
+            .AppendLine("  }")
+            .AppendLine("});")
+            .AppendLine("</script>")
+            .AppendLine("</div></div>")
+
+            .AppendLine("<div class=\"section-title\">Mutant(s) List</div>")
             .AppendLine("<div class=\"filters\">")
+            .AppendLine("<div class=\"filter-item\">")
             .AppendLine("<label for=\"mutantPhaseFilter\">Phase</label>")
             .AppendLine("<select id=\"mutantPhaseFilter\"><option value=\"all\">All</option><option value=\"pre-commit\">Pre-commit</option><option value=\"post-commit\">Post-commit</option></select>")
+            .AppendLine("</div>")
+            .AppendLine("<div class=\"filter-item\">")
             .AppendLine("<label for=\"mutantStatusFilter\">Status</label>")
             .AppendLine("<select id=\"mutantStatusFilter\"><option value=\"all\">All</option><option value=\"killed\">Killed</option><option value=\"survived\">Survived</option><option value=\"skipped\">Skipped</option></select>")
+            .AppendLine("</div>")
+            .AppendLine("<div class=\"filter-item\">")
             .AppendLine("<label for=\"mutantFileFilter\">File contains</label>")
             .AppendLine("<input id=\"mutantFileFilter\" type=\"text\" placeholder=\"e.g. MutationTestingSample\" />")
+            .AppendLine("</div>")
+            .AppendLine("<div class=\"filter-item\">")
             .AppendLine("<label for=\"mutantMutatorFilter\">Mutator contains</label>")
             .AppendLine("<input id=\"mutantMutatorFilter\" type=\"text\" placeholder=\"e.g. Equality mutation\" />")
+            .AppendLine("</div>")
+            .AppendLine("<div class=\"filter-item\">")
             .AppendLine("<label for=\"mutantPageSize\">Page size</label>")
             .AppendLine("<select id=\"mutantPageSize\"><option value=\"10\">10</option><option value=\"25\" selected>25</option><option value=\"50\">50</option><option value=\"100\">100</option></select>")
-            .AppendLine("</div>")
+            .AppendLine("</div></div>")
             .AppendLine("<p class=\"meta\" id=\"mutantFilterSummary\">Showing all mutants</p>")
             .AppendLine("<table id=\"mutantsTable\"><thead><tr><th>Phase</th><th>File</th><th>Line</th><th>Status</th><th>Mutator</th><th>Location</th></tr></thead><tbody id=\"mutantsTableBody\">")
             .Append(mutantRows)
@@ -305,9 +378,24 @@ internal sealed class ReportService
         ".delta-pos{color:#22c55e}.delta-neg{color:#ef4444}" +
         ".section{background:#fff;border-radius:10px;padding:20px;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-bottom:20px}" +
         ".section h2{margin:0 0 14px;font-size:.85em;color:#555;text-transform:uppercase;letter-spacing:.05em}" +
-        ".filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 12px;align-items:end;margin:10px 0 12px}" +
-        ".filters label{font-size:.8em;color:#555;font-weight:600}" +
-        ".filters select,.filters input{padding:6px 8px;border:1px solid #d7dce2;border-radius:6px;font-size:.85em;background:#fff;color:#222}" +
+        ".w-100{width:100%;float:left}" +
+        ".w-50{width:50%;float:left;}" +
+        ".summary-section {margin-bottom: 20px; }" +
+        ".section-title {font-weight: 600; margin: 10px 0; }" +
+        ".card-grid {display: flex; gap: 10px; flex-wrap: wrap; }" +
+        ".metric-card {min-width: 100px;padding: 15px;box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);}" +
+        ".metric-card h4 { margin: 0; font-size: 12px;color: #555;font-weight: 500;}" +
+        ".metric-card p { margin: 4px 0 0; font-size: 16px; font-weight: bold; }" +
+        ".total { border-top: 4px solid #3b82f6; }" +
+        ".killed {border-top: 4px solid #22c55e; }" +
+        ".survived {border-top: 4px solid #d83b01; }" +
+        ".skipped {border-top: 4px solid #605e5c; }" +
+        ".score {border-top: 4px solid #f8ab03; }" +
+        ".chart-container { width: 900px; max-width: 100%; margin: 20px 0; }" +
+        ".filters{display:flex;flex-wrap:wrap;gap:12px}" +
+        ".filter-item{display:flex;flex-direction:column;font-size:12px;min-width:140px}" +
+        ".filter-item label{margin-bottom:4px;font-weight:500;color: #555}" +
+        ".filter-item select,.filter-item input{padding:4px 6px;font-size:12px}" +
         ".pager{display:flex;align-items:center;gap:10px;margin:-8px 0 20px}" +
         ".pager button{padding:6px 10px;border:1px solid #d7dce2;border-radius:6px;background:#fff;color:#222;cursor:pointer}" +
         ".pager button:disabled{opacity:.5;cursor:not-allowed}" +
@@ -316,7 +404,7 @@ internal sealed class ReportService
         "th{background:#f8f9fa;padding:8px 12px;text-align:left;color:#666;font-weight:600;border-bottom:2px solid #e9ecef}" +
         "td{padding:7px 12px;border-bottom:1px solid #f0f0f0}" +
         "tr:last-child td{border-bottom:none}tr:hover td{background:#fafbfc}" +
-        "th:not(:first-child),td:not(:first-child){text-align:right}" +
+        "th:not(:first-child),td:not(:first-child){text-align:left}" +
         "</style></head><body>";
 
     private static string H(string? text) => WebUtility.HtmlEncode(text ?? string.Empty);
@@ -399,8 +487,8 @@ internal sealed class ReportService
                          $"{row.GetProperty("deltaSurvived").GetInt32():+0;-0;0} |");
         }
 
-        AppendMutantsMarkdownSection(sb, "Pre-commit Mutants", root.GetProperty("preMutants"));
-        AppendMutantsMarkdownSection(sb, "Post-commit Mutants", root.GetProperty("postMutants"));
+        AppendMutantsMarkdownSection(sb, "Pre-commit Mutants", root.GetProperty("preMutants"), preScore.ToString("F2"), postScore.ToString("F2"));
+        AppendMutantsMarkdownSection(sb, "Post-commit Mutants", root.GetProperty("postMutants"), preScore.ToString("F2"), postScore.ToString("F2"));
 
         return sb.ToString();
     }
@@ -441,7 +529,7 @@ internal sealed class ReportService
             ? $"{mutant.StartLine}:{mutant.StartColumn ?? 0}-{mutant.EndLine ?? mutant.StartLine}:{mutant.EndColumn ?? 0}"
             : "n/a";
 
-    private static void AppendMutantsMarkdownSection(StringBuilder sb, string sectionTitle, JsonElement mutants)
+    private static void AppendMutantsMarkdownSection(StringBuilder sb, string sectionTitle, JsonElement mutants, string preScore, string postScore)
     {
         var allMutants = mutants.EnumerateArray().ToList();
         var killedCount = allMutants.Count(m => (m.GetProperty("status").GetString() ?? string.Empty).Equals("Killed", StringComparison.OrdinalIgnoreCase));
@@ -455,6 +543,9 @@ internal sealed class ReportService
         sb.AppendLine($"- Killed: {killedCount}");
         sb.AppendLine($"- Survived: {survivedCount}");
         sb.AppendLine($"- Skipped: {skippedCount}");
+        sb.AppendLine();
+        sb.AppendLine($"- Pre-Score: {preScore}");
+        sb.AppendLine($"- Post-Score: {postScore}");
         sb.AppendLine();
         sb.AppendLine("| File | Mutant Id | Status | Mutator | Location |");
         sb.AppendLine("|---|---:|---|---|---|");
