@@ -67,8 +67,10 @@ internal sealed class WorkflowOrchestrator(
         ProcessResult? lastTestResult = null;
         var allTokenUsageRecords = new List<TokenUsageRecord>();
 
-        var survivedMutantsCount = preSummary.Mutants.Count(m => m.Status.Equals("Survived", StringComparison.OrdinalIgnoreCase));
-        if (survivedMutantsCount > 0)
+        var actionableMutantsCount = preSummary.Mutants.Count(m =>
+            m.Status.Equals("Survived", StringComparison.OrdinalIgnoreCase)
+            || m.Status.Equals("NoCoverage", StringComparison.OrdinalIgnoreCase));
+        if (actionableMutantsCount > 0)
         {
             var generationPlan = integration.BuildGenerationPlan(config.RepositoryRoot, testProjectPath, changedFiles);
             if (generationPlan.Count == 0)
@@ -143,7 +145,7 @@ internal sealed class WorkflowOrchestrator(
         }
         else
         {
-            Log(config, "No survived mutants detected in pre-commit report. Skipping AI test generation.");
+            Log(config, "No actionable mutants (Survived/NoCoverage) detected in pre-commit report. Skipping AI test generation.");
             stageTimings.Add(new PerformanceStageTiming("AI Test Generation", TimeSpan.Zero));
         }
 
