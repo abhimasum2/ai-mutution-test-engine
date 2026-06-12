@@ -1,6 +1,7 @@
 using Microsoft.Extensions.AI;
 using OpenAI;
 using System.ClientModel;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using MutationWorkflowEngine.Models;
@@ -69,12 +70,7 @@ internal sealed class OpenAiTestGenerationService
             ? await ReadTrimmedAsync(item.TestFileAbsolute, config.MaxSourceFileChars, cancellationToken)
             : string.Empty;
 
-        var fileReport = preCommitSummary.Files.FirstOrDefault(f =>
-            f.SourceFile.EndsWith(item.RelativeSourceFile.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase));
-
-        var mutationHints = fileReport is null
-            ? "No file-level mutation detail available."
-            : $"Mutants={fileReport.Total}, Survived={fileReport.Survived}, Killed={fileReport.Killed}, Score={fileReport.Score:F2}";
+        var mutationHints = BuildMutationHints(item.RelativeSourceFile, preCommitSummary);
 
         var prompt = BuildPrompt(framework, item.RelativeSourceFile, item.RelativeTestFile, mutationHints, sourceContent, existingTestContent);
 
@@ -156,19 +152,105 @@ Return only JSON with this exact schema:
 Rules:
 - {frameworkRule}
 - Keep namespace/project conventions compatible with existing tests.
+- Primary objective: kill every survived mutant listed in the mutation section below.
+- For each survived mutant ID, add at least one deterministic assertion path that fails on the mutant and passes on the original code.
+- Do not omit any survived mutant ID from your design.
 - Include focused assertions and edge cases.
+- Prefer explicit Arrange/Act/Assert structure and descriptive test names tied to behavior.
+- Cover boundary values, null/empty cases, branch conditions, and exceptional flows when relevant to mutants.
+- Keep tests deterministic (no randomness, no time/date dependence, no external I/O).
+- Make sure to write proper test cases that could compile  and run, pass without any further any issues, and effectively kill the survived mutants. Do not return placeholder tests or pseudocode.
 - Output complete file content, not a diff.
 - No markdown fences.
 - If existing tests are empty, create a brand new complete test file for this source file.
+- In ""reasoning"", include a line in this format exactly:
+    CoveredMutantIds: [comma-separated mutant IDs]
 
 Source file: {sourceFile}
-Mutation hints: {mutationHints}
+Mutation targets (must be covered):
+{mutationHints}
 
 Source code:
 {sourceCode}
 
 Existing tests (may be empty):
 {existingTests}";
+    }
+
+    private static string BuildMutationHints(string relativeSourceFile, MutationReportSummary preCommitSummary)
+    {
+        var normalizedRelativePath = relativeSourceFile.Replace('\\', '/');
+        var fileMutants = preCommitSummary.Mutants
+            .Where(m => IsMutationForSourceFile(m.SourceFile, normalizedRelativePath))
+            .ToList();
+
+        if (fileMutants.Count == 0)
+        {
+            return "No mutant-level details were found for this file. Derive high-risk scenarios from source logic and maximize behavioral coverage.";
+        }
+
+        var survived = fileMutants
+            .Where(m => m.Status.Equals("Survived", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(m => m.MutantId ?? int.MaxValue)
+            .ToList();
+
+        var killed = fileMutants
+            .Where(m => m.Status.Equals("Killed", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(m => m.MutantId ?? int.MaxValue)
+            .ToList();
+
+        var builder = new StringBuilder();
+        builder.AppendLine($"Summary: total={fileMutants.Count}, survived={survived.Count}, killed={killed.Count}");
+
+        builder.AppendLine("Survived mutants:");
+        if (survived.Count == 0)
+        {
+            builder.AppendLine("- none");
+        }
+        else
+        {
+            foreach (var mutant in survived)
+            {
+                builder.AppendLine($"- {FormatMutant(mutant)}");
+            }
+        }
+
+        builder.AppendLine("Killed mutants (for context):");
+        if (killed.Count == 0)
+        {
+            builder.AppendLine("- none");
+        }
+        else
+        {
+            foreach (var mutant in killed)
+            {
+                builder.AppendLine($"- {FormatMutant(mutant)}");
+            }
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static bool IsMutationForSourceFile(string mutationSourceFile, string normalizedRelativePath)
+    {
+        if (string.IsNullOrWhiteSpace(mutationSourceFile))
+        {
+            return false;
+        }
+
+        var normalizedMutationPath = mutationSourceFile.Replace('\\', '/');
+        return normalizedMutationPath.EndsWith(normalizedRelativePath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FormatMutant(MutationDetail mutant)
+    {
+        var mutantId = mutant.MutantId?.ToString() ?? "n/a";
+        var mutator = string.IsNullOrWhiteSpace(mutant.MutatorName) ? "unknown" : mutant.MutatorName;
+        var location = mutant.StartLine.HasValue
+            ? $"{mutant.StartLine}:{mutant.StartColumn ?? 0}-{mutant.EndLine ?? mutant.StartLine}:{mutant.EndColumn ?? 0}"
+            : "n/a";
+
+        return $"id={mutantId}, status={mutant.Status}, mutator={mutator}, location={location}";
     }
 
     private static GeneratedTestPatch ParsePatch(string rawText, string fallbackRelativePath)

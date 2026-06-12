@@ -70,6 +70,7 @@ internal sealed class WorkflowOrchestrator(
 
         IReadOnlyList<string> updatedTests = Array.Empty<string>();
         ProcessResult? lastBuildResult = null;
+        ProcessResult? lastTestResult = null;
         var allTokenUsageRecords = new List<TokenUsageRecord>();
 
         var aiStageTimer = Stopwatch.StartNew();
@@ -93,7 +94,33 @@ internal sealed class WorkflowOrchestrator(
             if (lastBuildResult.IsSuccess)
             {
                 Log(config, "Test project build passed.");
-                break;
+
+                Log(config, "Running test suite to validate generated tests...");
+                lastTestResult = await processRunner.RunAsync(
+                    "dotnet",
+                    $"test \"{testProjectPath}\" --no-build --nologo",
+                    config.RepositoryRoot,
+                    timeout,
+                    cancellationToken);
+
+                if (lastTestResult.IsSuccess)
+                {
+                    Log(config, "All tests passed.");
+                    break;
+                }
+
+                Log(config, $"Test execution failed on attempt {attempt}. Regenerating tests...");
+                if (attempt == config.GenerationMaxIterations)
+                {
+                    var testDetails = string.IsNullOrWhiteSpace(lastTestResult.StdErr)
+                        ? lastTestResult.StdOut
+                        : lastTestResult.StdErr;
+
+                    throw new InvalidOperationException(
+                        "Generated tests did not pass after all attempts. Last test output:\n" + testDetails);
+                }
+
+                continue;
             }
 
             Log(config, $"Test project build failed on attempt {attempt}. Regenerating tests...");
